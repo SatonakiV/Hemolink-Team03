@@ -30,6 +30,9 @@ migrate_working_dir/
 # Base local: cuentas, sesiones y datos privados.
 /server/data/
 
+# Documentación de trabajo local.
+/docs/
+
 # Flutter/Dart/Pub related
 **/doc/api/
 **/ios/Flutter/.last_build_id
