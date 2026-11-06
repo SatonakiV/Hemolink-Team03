@@ -1,7 +1,15 @@
 enum UserRole { nursing, inventory, hospital }
 
-/// Identidad que deberá proporcionar el servicio de autenticación.
+/// Identidad devuelta por el servicio de autenticación.
 class AppUser {
+  factory AppUser.fromJson(Map<String, dynamic> json) => AppUser(
+    id: json['id'] as String,
+    role: UserRole.values.byName(json['role'] as String),
+    isVerified: json['isVerified'] as bool,
+    siteId: json['siteId'] as String?,
+    hospitalId: json['hospitalId'] as String?,
+  );
+
   AppUser({
     required String id,
     required this.role,
