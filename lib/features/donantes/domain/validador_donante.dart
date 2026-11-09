@@ -23,6 +23,31 @@ class ValidadorDonante {
     required DateTime fechaRegistro,
     DateTime? fechaActual,
   }) {
+    final normalizados = validarDatos(datos, fechaActual: fechaActual);
+    final errores = <String, String>{};
+    if (id.trim().isEmpty) {
+      errores['id'] = 'El identificador del donante es obligatorio.';
+    }
+    if (usuarioRegistroId.trim().isEmpty) {
+      errores['usuarioRegistroId'] = 'El usuario de registro es obligatorio.';
+    }
+    if (errores.isNotEmpty) throw ValidacionDonanteException(errores);
+    return Donante(
+      id: id.trim(),
+      rut: normalizados.rut!,
+      nombre: normalizados.nombre!,
+      fechaNacimiento: normalizados.fechaNacimiento!,
+      pesoKg: normalizados.pesoKg!,
+      grupoAbo: normalizados.grupoAbo!,
+      factorRh: normalizados.factorRh!,
+      telefono: normalizados.telefono!,
+      usuarioRegistroId: usuarioRegistroId.trim(),
+      fechaRegistro: fechaRegistro,
+    );
+  }
+
+  /// Valida antecedentes antes de enviarlos, sin inventar metadatos del servidor.
+  DatosDonante validarDatos(DatosDonante datos, {DateTime? fechaActual}) {
     final errores = <String, String>{};
     final rut = datos.rut?.trim() ?? '';
     final nombre = datos.nombre?.trim() ?? '';
@@ -58,16 +83,9 @@ class ValidadorDonante {
     if (telefono.isEmpty) {
       errores['telefono'] = 'El teléfono es obligatorio.';
     }
-    if (id.trim().isEmpty) {
-      errores['id'] = 'El identificador del donante es obligatorio.';
-    }
-    if (usuarioRegistroId.trim().isEmpty) {
-      errores['usuarioRegistroId'] = 'El usuario de registro es obligatorio.';
-    }
     if (errores.isNotEmpty) throw ValidacionDonanteException(errores);
 
-    return Donante(
-      id: id.trim(),
+    return DatosDonante(
       rut: ValidadorRut.normalizar(rut),
       nombre: nombre,
       fechaNacimiento: DateTime(
@@ -75,12 +93,10 @@ class ValidadorDonante {
         nacimiento.month,
         nacimiento.day,
       ),
-      pesoKg: peso!,
+      pesoKg: peso,
       grupoAbo: grupo,
       factorRh: rh,
       telefono: telefono,
-      usuarioRegistroId: usuarioRegistroId.trim(),
-      fechaRegistro: fechaRegistro,
     );
   }
 

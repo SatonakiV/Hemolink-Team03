@@ -31,6 +31,7 @@ class AuthSession {
   String? _token;
   AppUser? _currentUser;
   AppUser? get currentUser => _currentUser;
+  String? get accessToken => _token;
 
   Future<void> _clear() async {
     _token = null;
