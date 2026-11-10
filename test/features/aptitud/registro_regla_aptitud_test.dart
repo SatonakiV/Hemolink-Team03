@@ -35,19 +35,8 @@ class RepositorioPrueba implements EvaluacionRepository {
       return null;
     }
 
-    // La evaluación más reciente debe aparecer primero.
-    historial.sort((a, b) {
-      final comparacion =
-          b.fechaEvaluacion.compareTo(a.fechaEvaluacion);
-
-      if (comparacion != 0) {
-        return comparacion;
-      }
-
-      return b.fechaRegistro.compareTo(a.fechaRegistro);
-    });
-
-    return historial.first;
+    // Mismo contrato del servidor: última incorporada al historial.
+    return historial.last;
   }
 }
 
@@ -71,9 +60,7 @@ class ValidadorPrueba implements ValidadorEvaluacion {
   }) async {
     // Estas pruebas no registran evaluaciones.
     // Si se intenta validar, existe un error en el flujo.
-    throw StateError(
-      'No se debe validar durante la consulta de aptitud.',
-    );
+    throw StateError('No se debe validar durante la consulta de aptitud.');
   }
 }
 
@@ -101,9 +88,7 @@ EvaluacionAptitud crearEvaluacion({
 void main() {
   final fechaConsulta = DateTime(2026, 11, 8);
 
-  RegistroEvaluaciones crearRegistro(
-    List<EvaluacionAptitud> evaluaciones,
-  ) {
+  RegistroEvaluaciones crearRegistro(List<EvaluacionAptitud> evaluaciones) {
     return RegistroEvaluaciones(
       repositorio: RepositorioPrueba(evaluaciones),
       validador: ValidadorPrueba(),
@@ -131,16 +116,16 @@ void main() {
   test('INT2: una evaluación diferida reemplaza a la apta', () async {
     final registro = crearRegistro([
       crearEvaluacion(
-        id: 'EV002',
-        resultado: ResultadoAptitud.diferido,
-        fechaEvaluacion: DateTime(2026, 11, 7),
-        fechaHabilitacion: DateTime(2026, 11, 15),
-      ),
-      crearEvaluacion(
         id: 'EV001',
         resultado: ResultadoAptitud.apto,
         fechaEvaluacion: DateTime(2026, 11, 1),
         fechaFinVigencia: DateTime(2026, 11, 20),
+      ),
+      crearEvaluacion(
+        id: 'EV002',
+        resultado: ResultadoAptitud.diferido,
+        fechaEvaluacion: DateTime(2026, 11, 7),
+        fechaHabilitacion: DateTime(2026, 11, 15),
       ),
     ]);
 
