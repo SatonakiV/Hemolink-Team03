@@ -339,15 +339,11 @@ export function createApplication({
 
             items = items.filter(item => item.donanteId === donanteId);
 
-            items.sort((a, b) =>
-              String(b.fechaEvaluacion ?? '').localeCompare(
-                String(a.fechaEvaluacion ?? ''),
-              ) ||
-              String(b.fechaRegistro ?? '').localeCompare(
-                String(a.fechaRegistro ?? ''),
-              ),
-            );
           }
+
+          // Las transacciones agregan al final del historial persistido. La última
+          // registrada es actual, incluso con fecha clínica anterior o igual hora.
+          items.reverse();
 
           send(200, { items });
           return;

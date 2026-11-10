@@ -80,6 +80,30 @@ class _AccessPageState extends State<AccessPage> {
     });
   }
 
+  String _descripcionRegistro(Map<String, dynamic> item) {
+    final label = item['label'];
+    if (label is String && label.trim().isNotEmpty) return label;
+    if (_module == 'evaluations') {
+      final resultado = switch (item['resultado']) {
+        'apto' => 'Apto',
+        'diferido' => 'Diferido temporalmente',
+        'rechazado' => 'Rechazado permanentemente',
+        _ => 'Evaluación',
+      };
+      final donante = item['donanteId'];
+      final fecha = item['fechaEvaluacion'];
+      return [
+        resultado,
+        if (donante is String && donante.isNotEmpty) 'Donante $donante',
+        if (fecha is String && fecha.isNotEmpty) fecha,
+      ].join(' · ');
+    }
+    final nombre = item['nombre'];
+    if (nombre is String && nombre.trim().isNotEmpty) return nombre;
+    final id = item['id'];
+    return id is String ? 'Registro $id' : 'Registro sin descripción.';
+  }
+
   @override
   void dispose() {
     _email.dispose();
@@ -260,7 +284,7 @@ class _AccessPageState extends State<AccessPage> {
                                     padding: const EdgeInsets.symmetric(
                                       vertical: 8,
                                     ),
-                                    child: Text(item['label'] as String),
+                                    child: Text(_descripcionRegistro(item)),
                                   ),
                             ],
                             const SizedBox(height: 24),

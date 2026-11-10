@@ -84,6 +84,17 @@ test('T02.1: la evaluación persiste al reiniciar el servidor', async () => {
 
     assert.equal(registro.status, 201);
 
+    // Una evaluación registrada después queda actual aunque sea retroactiva.
+    const segundaEvaluacion = await fetch(`${primera.url}/api/evaluations`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        id: 'EV_T021_NUEVA', donanteId: 'D_T021', resultado: 'rechazado',
+        fechaEvaluacion: '2026-11-07',
+      }),
+    });
+    assert.equal(segundaEvaluacion.status, 201);
+
     // 4. Apagamos completamente el servidor.
     await detener();
 
@@ -108,6 +119,13 @@ test('T02.1: la evaluación persiste al reiniciar el servidor', async () => {
     assert.equal(item.donanteId, 'D_T021');
     assert.equal(item.resultado, 'apto');
     assert.equal(item.fechaFinVigencia, '2026-11-20');
+
+    const historial = await fetch(`${segunda.url}/api/evaluations?donanteId=D_T021`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    assert.equal(historial.status, 200);
+    assert.deepEqual((await historial.json()).items.map(evaluacion => evaluacion.id),
+      ['EV_T021_NUEVA', 'EV_T021']);
 
   } finally {
     await detener();
