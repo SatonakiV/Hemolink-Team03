@@ -1,70 +1,123 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hemolink/domain/muestra.dart';
 
-// Simulación ligera de una unidad de sangre para pruebas de separación de entidades
-class UnidadSangrePrueba {
-  final String codigo;
-  final String donacionId;
-
-  const UnidadSangrePrueba({
-    required this.codigo,
-    required this.donacionId,
-  });
-}
-
 void main() {
   group('T04.3 - Verificación de Muestras y Exclusión del Stock', () {
     final fecha = DateTime(2026, 11, 3);
-    final muestra = Muestra(
-      codigo: 'M-001',
-      donacionId: 'DON-123',
-      responsableId: 'enfermeria-01',
-      fechaRegistro: fecha,
-    );
-    final unidad = const UnidadSangrePrueba(
-      codigo: 'U-001',
-      donacionId: 'DON-123',
-    );
 
-    test('UT04.3-A: una muestra y una unidad siguen siendo colecciones distintas al consultar', () {
-      final muestras = [muestra];
-      final unidades = [unidad];
+    test('UT04.3-A: el componente de dominio ejercita y mantiene separadas las colecciones de muestras y unidades', () {
+      final registro = RegistroMuestrasDominio();
+      final muestra = Muestra(
+        codigo: 'M-001',
+        donacionId: 'DON-123',
+        responsableId: 'enfermeria-01',
+        fechaRegistro: fecha,
+      );
+      final unidad = UnidadSangre(
+        codigo: 'U-001',
+        donacionId: 'DON-123',
+      );
 
-      expect(muestras, isNot(contains(unidad)));
-      expect(unidades, isNot(contains(muestra)));
-      expect(muestras.length, 1);
-      expect(unidades.length, 1);
-      expect(muestras.first.codigo, 'M-001');
-      expect(unidades.first.codigo, 'U-001');
+      registro.registrarMuestra(muestra);
+
+      final entidadesMixtas = <dynamic>[muestra, unidad];
+      final unidadesElegibles = RegistroMuestrasDominio.obtenerUnidadesElegiblesParaStock(entidadesMixtas);
+
+      expect(registro.muestras, contains(muestra));
+      expect(registro.muestras, isNot(contains(unidad)));
+      expect(unidadesElegibles, contains(unidad));
+      expect(unidadesElegibles, isNot(contains(muestra)));
     });
 
-    test('UT04.3-B: el conjunto de unidades excluye la muestra aunque compartan donación', () {
-      final entidadesDonacion = <dynamic>[muestra, unidad];
+    test('UT04.3-B: la consulta de componentes de stock excluye explícitamente la muestra aunque compartan donación', () {
+      final muestra = Muestra(
+        codigo: 'M-001',
+        donacionId: 'DON-999',
+        responsableId: 'enfermeria-01',
+        fechaRegistro: fecha,
+      );
+      final unidad = UnidadSangre(
+        codigo: 'U-001',
+        donacionId: 'DON-999',
+      );
 
-      // Filtrar unidades excluyendo muestras de la misma donación
-      final unidadesFiltradas = entidadesDonacion.where((e) => e is! Muestra).toList();
+      final entidadesDonacion = [muestra, unidad];
+      final unidadesParaInventarioReservaDespacho =
+          RegistroMuestrasDominio.obtenerUnidadesElegiblesParaStock(entidadesDonacion);
 
-      expect(unidadesFiltradas, contains(unidad));
-      expect(unidadesFiltradas, isNot(contains(muestra)));
-      expect(unidadesFiltradas.length, 1);
+      expect(unidadesParaInventarioReservaDespacho.length, 1);
+      expect(unidadesParaInventarioReservaDespacho.first.codigo, 'U-001');
+      expect(unidadesParaInventarioReservaDespacho, isNot(contains(muestra)));
     });
 
-    test('UT04.3-C: el contrato de elegibilidad rechaza una muestra para stock, reserva y despacho', () {
-      // Una muestra jamás debe ser elegible para stock
+    test('UT04.3-C: el contrato esElegibleParaStock distingue entre una UnidadSangre válida (true) y una Muestra (false)', () {
+      final muestra = Muestra(
+        codigo: 'M-001',
+        donacionId: 'DON-123',
+        responsableId: 'enfermeria-01',
+        fechaRegistro: fecha,
+      );
+      final unidad = UnidadSangre(
+        codigo: 'U-001',
+        donacionId: 'DON-123',
+      );
+
+      // Muestra jamás es elegible para stock, reserva ni despacho
       expect(esElegibleParaStock(muestra), isFalse);
+
+      // Una UnidadSangre sí es elegible para stock
+      expect(esElegibleParaStock(unidad), isTrue);
+
+      // Cualquier otro tipo desconocido es rechazado
+      expect(esElegibleParaStock('objeto-invalido'), isFalse);
     });
 
-    test('UT04.3-D: limpieza de código e invariantes de origen de la muestra', () {
-      final muestraConEspacios = Muestra(
-        codigo: '  M-002  ',
+    test('UT04.3-D: rechazo de códigos duplicados y donación/código inválido en muestras', () {
+      final registro = RegistroMuestrasDominio();
+      final muestraValida = Muestra(
+        codigo: '  M-001  ',
         donacionId: '  DON-123  ',
         responsableId: '  enfermeria-01  ',
         fechaRegistro: fecha,
       );
 
-      expect(muestraConEspacios.codigo, 'M-002');
-      expect(muestraConEspacios.donacionId, 'DON-123');
-      expect(muestraConEspacios.responsableId, 'enfermeria-01');
+      expect(muestraValida.codigo, 'M-001');
+      expect(muestraValida.donacionId, 'DON-123');
+      registro.registrarMuestra(muestraValida);
+
+      // Rechazar duplicado (incluso con distinta combinación de mayúsculas/minúsculas)
+      final muestraDuplicada = Muestra(
+        codigo: 'm-001',
+        donacionId: 'DON-123',
+        responsableId: 'enfermeria-01',
+        fechaRegistro: fecha,
+      );
+      expect(
+        () => registro.registrarMuestra(muestraDuplicada),
+        throwsA(isA<ArgumentError>()),
+      );
+
+      // Rechazar código de muestra vacío
+      expect(
+        () => Muestra(
+          codigo: '   ',
+          donacionId: 'DON-123',
+          responsableId: 'enfermeria-01',
+          fechaRegistro: fecha,
+        ),
+        throwsA(isA<ArgumentError>()),
+      );
+
+      // Rechazar referencia a donación vacía (origen inválido)
+      expect(
+        () => Muestra(
+          codigo: 'M-002',
+          donacionId: '',
+          responsableId: 'enfermeria-01',
+          fechaRegistro: fecha,
+        ),
+        throwsA(isA<ArgumentError>()),
+      );
     });
   });
 }
