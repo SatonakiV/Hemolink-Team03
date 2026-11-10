@@ -36,3 +36,17 @@ test('sembrar dos veces conserva cuentas, contraseñas y datos sin duplicarlos',
   seedDemoData(store, 'otra-clave');
   assert.deepEqual(store.read(), before);
 });
+
+test('la semilla antigua de donantes se completa sin cambiar su identificador ni evaluaciones', t => {
+  const store = new JsonStore(fixture(t));
+  store.update(db => db.records.push(
+    { id: 'demo-donors', module: 'donors', scopeId: 'sede-central', label: 'Donante ficticio de prueba' },
+    { id: 'EV001', module: 'evaluations', donanteId: 'demo-donors' },
+  ));
+  seedDemoData(store, 'original');
+  const before = store.read();
+  assert.equal(before.records.find(item => item.id === 'demo-donors').rut, '11111111-1');
+  assert.equal(before.records.find(item => item.id === 'EV001').donanteId, 'demo-donors');
+  seedDemoData(store, 'original');
+  assert.deepEqual(store.read(), before);
+});

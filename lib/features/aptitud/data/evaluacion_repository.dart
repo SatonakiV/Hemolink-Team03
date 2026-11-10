@@ -7,6 +7,6 @@ abstract interface class EvaluacionRepository {
   // Recupera una evaluación mediante su identificador.
   Future<EvaluacionAptitud?> buscarPorId(String id);
 
-  // Recupera la última evaluación del donante.
+  // Última incorporada al historial, independientemente de su fecha clínica.
   Future<EvaluacionAptitud?> buscarActual(String donanteId);
 }

@@ -1,5 +1,8 @@
 import { createServer } from 'node:http';
+import { randomUUID } from 'node:crypto';
 import { JsonStore } from './json-store.mjs';
+import { fechaValida, fechaLocal } from './dates.mjs';
+import { DonanteError, normalizarRut, rutValido, validarDonante } from './donors.mjs';
 import {
   matchesPassword, passwordHash, tokenHash, newToken,
   publicUser, isAuthorizedUser, roleModules, seedDemoData,
@@ -32,27 +35,6 @@ async function readBody(request) {
   } catch {
     throw new ApiError(400, 'Solicitud JSON inválida.');
   }
-}
-
-// Para los datos clínicos del prototipo usamos fechas civiles YYYY-MM-DD.
-// Date.parse por sí solo acepta fechas imposibles, como 2026-02-30.
-function fechaValida(valor) {
-  if (typeof valor !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(valor)) {
-    return false;
-  }
-  const [anio, mes, dia] = valor.split('-').map(Number);
-  const fecha = new Date(Date.UTC(anio, mes - 1, dia));
-  return fecha.getUTCFullYear() === anio &&
-    fecha.getUTCMonth() === mes - 1 &&
-    fecha.getUTCDate() === dia;
-}
-
-function fechaLocal(clock) {
-  const fecha = new Date(clock());
-  const anio = String(fecha.getFullYear()).padStart(4, '0');
-  const mes = String(fecha.getMonth() + 1).padStart(2, '0');
-  const dia = String(fecha.getDate()).padStart(2, '0');
-  return `${anio}-${mes}-${dia}`;
 }
 
 function validarEvaluacion(datos, clock) {
@@ -224,6 +206,62 @@ export function createApplication({
         return;
       }
 
+      if (path === '/api/donors' || path.startsWith('/api/donors/')) {
+        const { user } = authenticate(request);
+        if (!roleModules[user.role]?.includes('donors')) {
+          throw new ApiError(403, 'Tu perfil no puede gestionar donantes.');
+        }
+
+        if (path === '/api/donors' && request.method === 'POST') {
+          const datos = validarDonante(await readBody(request), fechaLocal(clock));
+          const item = {
+            ...datos, id: randomUUID(), module: 'donors', scopeId: user.siteId,
+            label: datos.nombre, usuarioRegistroId: user.id,
+            fechaRegistro: new Date(clock()).toISOString(),
+          };
+          store.update(db => {
+            // Comprobar dentro de la transacción serializada, no antes de guardar.
+            if (db.records.some(record => record.module === 'donors' &&
+                normalizarRut(record.rut) === datos.rut)) {
+              throw new DonanteError(409, 'Ya existe un donante con ese RUT.', {
+                rut: 'Ya existe un donante con ese RUT.',
+              });
+            }
+            db.records.push(item);
+          });
+          send(201, { item });
+          return;
+        }
+
+        if (request.method === 'GET') {
+          let items = store.read().records.filter(record =>
+            record.module === 'donors' && record.scopeId === user.siteId,
+          );
+          if (path !== '/api/donors') {
+            const id = path.slice('/api/donors/'.length);
+            const item = /^[A-Za-z0-9_-]{1,64}$/.test(id)
+              ? items.find(record => record.id === id) : undefined;
+            if (!item) throw new ApiError(404, 'Donante no encontrado.');
+            send(200, { item });
+            return;
+          }
+          const rut = url.searchParams.get('rut');
+          const nombre = url.searchParams.get('nombre')?.trim().toLowerCase();
+          if (rut !== null) {
+            if (!rutValido(rut)) {
+              throw new DonanteError(400, 'El RUT de búsqueda no es válido.', {
+                rut: 'Ingresa un RUT válido para buscar.',
+              });
+            }
+            items = items.filter(record => normalizarRut(record.rut) === normalizarRut(rut));
+          }
+          if (nombre) items = items.filter(record => record.nombre?.toLowerCase().includes(nombre));
+          send(200, { items });
+          return;
+        }
+        throw new ApiError(405, 'Operación no implementada.');
+      }
+
       // T02.1: lectura y escritura de evaluaciones, solo para enfermería.
       if (path === '/api/evaluations' || path.startsWith('/api/evaluations/')) {
         const { user } = authenticate(request);
@@ -301,15 +339,11 @@ export function createApplication({
 
             items = items.filter(item => item.donanteId === donanteId);
 
-            items.sort((a, b) =>
-              String(b.fechaEvaluacion ?? '').localeCompare(
-                String(a.fechaEvaluacion ?? ''),
-              ) ||
-              String(b.fechaRegistro ?? '').localeCompare(
-                String(a.fechaRegistro ?? ''),
-              ),
-            );
           }
+
+          // Las transacciones agregan al final del historial persistido. La última
+          // registrada es actual, incluso con fecha clínica anterior o igual hora.
+          items.reverse();
 
           send(200, { items });
           return;
@@ -352,6 +386,7 @@ export function createApplication({
         message: error.status
           ? error.message
           : 'No se pudo completar la operación.',
+        ...(error instanceof DonanteError ? { errors: error.errors } : {}),
       });
     }
   });

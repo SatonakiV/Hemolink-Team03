@@ -6,7 +6,8 @@ Proyecto banco de sangre
 
 - Flutter 3.47.2 (incluye Dart 3.13.2).
 - Node.js 22 o superior para la API local (sin paquetes npm ni base externa).
-- Edge para web o herramientas de C++ de Visual Studio para Windows.
+- Edge para web. Para Windows, herramientas de C++ de Visual Studio con la
+  biblioteca ATL de C++ para x86 y x64 de la misma versión del compilador.
 
 ## Instalar dependencias
 

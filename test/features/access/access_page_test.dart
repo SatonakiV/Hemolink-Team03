@@ -75,6 +75,42 @@ void main() {
     expect(find.text('Cerrar sesión'), findsNothing);
   });
 
+  testWidgets('el listado admite evaluaciones de la API sin label', (
+    tester,
+  ) async {
+    final session = AuthSession(
+      tokenStore: MemoryTokenStore(),
+      client: MockClient((request) async {
+        if (request.url.path == '/api/login') {
+          return jsonResponse({'token': 'opaque', 'user': nursingUser});
+        }
+        return jsonResponse({
+          'items': [
+            {
+              'id': 'EV001',
+              'donanteId': 'DON001',
+              'resultado': 'apto',
+              'fechaEvaluacion': '2026-11-05',
+              'fechaFinVigencia': '2026-11-20',
+              'responsableId': 'ENF001',
+              'fechaRegistro': '2026-11-08T15:00:00Z',
+            },
+            {'label': 'Evaluación ficticia de prueba'},
+          ],
+        });
+      }),
+    );
+    addTearDown(session.dispose);
+    await tester.pumpWidget(MainApp(session: session));
+    await tester.pumpAndSettle();
+    await enter(tester);
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Evaluaciones'));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    expect(find.text('Apto · Donante DON001 · 2026-11-05'), findsOneWidget);
+    expect(find.text('Evaluación ficticia de prueba'), findsOneWidget);
+  });
+
   for (final role in ['nursing', 'inventory', 'hospital']) {
     testWidgets('UT01.1-D: $role solo navega por sus módulos', (tester) async {
       await tester.pumpWidget(MainApp(session: sessionFor(role: role)));

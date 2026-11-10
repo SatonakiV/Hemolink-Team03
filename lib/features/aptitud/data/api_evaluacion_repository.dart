@@ -213,7 +213,7 @@ class ApiEvaluacionRepository implements EvaluacionRepository {
         return null;
       }
 
-      // El servidor devuelve el historial en orden descendente.
+      // El servidor devuelve primero la última incorporada al historial.
       return _desdeJson(
         historial.first as Map<String, dynamic>,
       );

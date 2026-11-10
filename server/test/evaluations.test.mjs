@@ -76,6 +76,7 @@ async function entorno(prueba) {
 
     await prueba({
       api,
+      solicitar,
       store,
       archivo,
       usuarioId: login.datos.user.id,
@@ -120,6 +121,67 @@ test('UT1: guarda los tres resultados y el responsable', async () => {
       assert.equal(respuesta.datos.item.responsableId, usuarioId);
       assert.ok(respuesta.datos.item.fechaRegistro);
     }
+  });
+});
+
+test('PR18: la última registrada es actual aunque su fecha clínica sea anterior y haya empate de registro', async () => {
+  await entorno(async ({ api }) => {
+    for (const caso of [
+      { ...BASE, id: 'EV_Z', fechaEvaluacion: '2026-11-07' },
+      { ...BASE, id: 'EV_A', fechaEvaluacion: '2026-11-05' },
+      { ...BASE, id: 'EV_B', fechaEvaluacion: '2026-11-05' },
+    ]) {
+      const guardada = await api('/api/evaluations', { metodo: 'POST', cuerpo: caso });
+      assert.equal(guardada.estado, 201);
+    }
+    const historial = await api('/api/evaluations?donanteId=D001');
+    assert.deepEqual(historial.datos.items.map(item => item.id), ['EV_B', 'EV_A', 'EV_Z']);
+    const historica = await api('/api/evaluations/EV_Z');
+    assert.equal(historica.datos.item.fechaEvaluacion, '2026-11-07');
+  });
+});
+
+test('PR18: servidor rechaza consultas y altas sin sesión o con rol ajeno sin alterar historial', async () => {
+  await entorno(async ({ api, solicitar, store }) => {
+    assert.equal((await api('/api/evaluations', { metodo: 'POST', cuerpo: BASE })).estado, 201);
+    const registros = store.read().records;
+    const accesos = [{ token: undefined, estado: 401 }];
+    for (const email of ['inventario@hemolink.test', 'hospital@hemolink.test']) {
+      const login = await solicitar('/api/login', {
+        metodo: 'POST', cuerpo: { email, password: 'DemoHemoLink2026!' },
+      });
+      assert.equal(login.estado, 200);
+      accesos.push({ token: login.datos.token, estado: 403 });
+    }
+    for (const { token, estado } of accesos) {
+      for (const ruta of ['/api/evaluations', '/api/evaluations/EV001', '/api/evaluations?donanteId=D001']) {
+        const respuesta = await solicitar(ruta, { token });
+        assert.equal(respuesta.estado, estado);
+        assert.equal(respuesta.datos.item, undefined);
+        assert.equal(respuesta.datos.items, undefined);
+      }
+      assert.equal((await solicitar('/api/evaluations', {
+        token, metodo: 'POST', cuerpo: { ...BASE, id: 'EV_DENEGADA' },
+      })).estado, estado);
+    }
+    assert.deepEqual(store.read().records, registros);
+  });
+});
+
+test('PR18: datos de otra sede no son consultables ni se aceptan como origen', async () => {
+  await entorno(async ({ api, store }) => {
+    store.update(db => db.records.push(
+      { id: 'D_AJENO', module: 'donors', scopeId: 'otra-sede' },
+      { ...BASE, id: 'EV_AJENA', donanteId: 'D_AJENO', module: 'evaluations', scopeId: 'otra-sede' },
+    ));
+    const registros = store.read().records;
+    assert.equal((await api('/api/evaluations/EV_AJENA?siteId=otra-sede')).estado, 404);
+    const listado = await api('/api/evaluations?donanteId=D_AJENO&siteId=otra-sede');
+    assert.deepEqual(listado.datos.items, []);
+    assert.equal((await api('/api/evaluations', {
+      metodo: 'POST', cuerpo: { ...BASE, id: 'EV_NUEVA', donanteId: 'D_AJENO', scopeId: 'otra-sede' },
+    })).estado, 404);
+    assert.deepEqual(store.read().records, registros);
   });
 });
 

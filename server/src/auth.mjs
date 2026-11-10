@@ -58,8 +58,17 @@ export function seedDemoData(store, password) {
       ['requests', 'Solicitud ficticia de prueba'],
     ]) {
       const id = `demo-${module}`;
+      const datosDonante = module === 'donors' ? {
+        rut: '11111111-1', nombre: label, fechaNacimiento: '1990-01-01',
+        pesoKg: 70, grupoAbo: 'O', factorRh: 'positivo', telefono: '912345678',
+        usuarioRegistroId: 'nursing-demo', fechaRegistro: '2026-11-02T12:00:00.000Z',
+      } : {};
       if (!db.records.some(record => record.id === id)) {
-        db.records.push({ id, module, label, scopeId: module === 'requests' ? 'hospital-demo' : 'sede-central' });
+        db.records.push({ id, module, label, scopeId: module === 'requests' ? 'hospital-demo' : 'sede-central', ...datosDonante });
+      } else if (module === 'donors') {
+        // Completar únicamente la antigua semilla sin antecedentes de T01.1.
+        const record = db.records.find(record => record.id === id);
+        if (!record.rut) Object.assign(record, datosDonante);
       }
     }
   });
