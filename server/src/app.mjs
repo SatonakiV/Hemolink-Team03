@@ -260,6 +260,51 @@ export function createApplication({
           send(200, { items });
           return;
         }
+
+        // T04.4: corrección de antecedentes del donante.
+        if (request.method === 'PUT' && path.startsWith('/api/donors/')) {
+          const id = path.slice('/api/donors/'.length);
+          if (!/^[A-Za-z0-9_-]{1,64}$/.test(id)) {
+            throw new ApiError(404, 'Donante no encontrado.');
+          }
+          const datos = validarDonante(await readBody(request), fechaLocal(clock));
+          let itemActualizado;
+          store.update(db => {
+            const index = db.records.findIndex(record =>
+              record.module === 'donors' && record.scopeId === user.siteId && record.id === id,
+            );
+            if (index === -1) {
+              throw new ApiError(404, 'Donante no encontrado.');
+            }
+            // UT04.4-B: unicidad excluyendo al propio registro.
+            if (db.records.some(record =>
+              record.module === 'donors' &&
+              record.id !== id &&
+              normalizarRut(record.rut) === datos.rut,
+            )) {
+              throw new DonanteError(409, 'Ya existe un donante con ese RUT.', {
+                rut: 'Ya existe un donante con ese RUT.',
+              });
+            }
+            const actual = db.records[index];
+            itemActualizado = {
+              ...actual,
+              ...datos,
+              id: actual.id,
+              module: 'donors',
+              scopeId: actual.scopeId,
+              label: datos.nombre,
+              usuarioRegistroId: actual.usuarioRegistroId,
+              fechaRegistro: actual.fechaRegistro,
+              usuarioModificacionId: user.id,
+              fechaModificacion: new Date(clock()).toISOString(),
+            };
+            db.records[index] = itemActualizado;
+          });
+          send(200, { item: itemActualizado });
+          return;
+        }
+
         throw new ApiError(405, 'Operación no implementada.');
       }
 
