@@ -55,7 +55,7 @@ test('UT01.1-A: credenciales verificadas crean sesión con rol y sede', async t 
   assert.equal(result.status, 200);
   assert.equal(result.data.user.role, 'nursing');
   assert.equal(result.data.user.siteId, 'sede-central');
-  assert.deepEqual(result.data.user.modules, ['donors', 'evaluations']);
+  assert.deepEqual(result.data.user.modules, ['donors', 'evaluations', 'donations']);
   assert.equal((await f.request('/api/me', { token: result.data.token })).status, 200);
   const file = readFileSync(f.databasePath, 'utf8');
   assert.ok(!file.includes(password));

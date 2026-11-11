@@ -8,7 +8,7 @@ abstract final class AccessPolicy {
   static List<String> modulesFor(AppUser? user) {
     if (user == null || !user.isVerified) return const [];
     return switch (user.role) {
-      UserRole.nursing => const ['donors', 'evaluations'],
+      UserRole.nursing => const ['donors', 'evaluations', 'donations'],
       UserRole.inventory => const ['inventory'],
       UserRole.hospital => const ['requests'],
     };

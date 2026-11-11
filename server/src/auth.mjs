@@ -1,7 +1,7 @@
 import { randomBytes, scryptSync, timingSafeEqual, createHash } from 'node:crypto';
 
 export const roleModules = Object.freeze({
-  nursing: ['donors', 'evaluations'],
+  nursing: ['donors', 'evaluations', 'donations'],
   inventory: ['inventory'],
   hospital: ['requests'],
 });
