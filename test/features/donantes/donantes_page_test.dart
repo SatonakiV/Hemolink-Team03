@@ -46,6 +46,10 @@ class RepoConsulta implements DonanteRepository {
 
   @override
   Future<Donante> guardar(DatosDonante datos) => throw UnimplementedError();
+
+  @override
+  Future<Donante> actualizar(String id, DatosDonante datos) =>
+      throw UnimplementedError();
 }
 
 Future<AuthSession> sesionPrueba(
