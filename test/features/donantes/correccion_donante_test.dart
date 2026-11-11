@@ -232,6 +232,8 @@ void main() {
         );
 
         // La evaluación histórica mantiene su donanteId y sus fechas intactas
+        expect(donanteOriginal.id, donanteModificado.id);
+        expect(donanteOriginal.grupoAbo, isNot(donanteModificado.grupoAbo));
         expect(evaluacionHistorica.donanteId, donanteModificado.id);
         expect(evaluacionHistorica.resultado, ResultadoAptitud.apto);
         expect(evaluacionHistorica.responsableId, 'ENF-ORIGINAL');
