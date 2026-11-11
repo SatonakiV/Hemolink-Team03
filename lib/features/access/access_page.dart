@@ -11,6 +11,7 @@ import '../donantes/presentation/donantes_page.dart';
 const moduleNames = {
   'donors': 'Donantes',
   'evaluations': 'Evaluaciones',
+  'donations': 'Donaciones',
   'inventory': 'Inventario',
   'requests': 'Solicitudes',
 };

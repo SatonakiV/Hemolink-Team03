@@ -14,3 +14,10 @@ export function fechaLocal(clock) {
   const dia = String(fecha.getDate()).padStart(2, '0');
   return `${anio}-${mes}-${dia}`;
 }
+
+// Suma días calendario a una fecha civil YYYY-MM-DD usando UTC: el horario de
+// verano local no puede correr el resultado un día.
+export function sumarDias(fecha, dias) {
+  const [anio, mes, dia] = fecha.split('-').map(Number);
+  return new Date(Date.UTC(anio, mes - 1, dia + dias)).toISOString().slice(0, 10);
+}
