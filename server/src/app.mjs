@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { JsonStore } from './json-store.mjs';
 import { fechaValida, fechaLocal } from './dates.mjs';
 import { DonanteError, normalizarRut, rutValido, validarDonante } from './donors.mjs';
+import { donacionDeSede, registrarMuestra } from './samples.mjs';
 import {
   matchesPassword, passwordHash, tokenHash, newToken,
   publicUser, isAuthorizedUser, roleModules, seedDemoData,
@@ -349,6 +350,39 @@ export function createApplication({
           return;
         }
 
+        throw new ApiError(405, 'Operación no implementada.');
+      }
+
+      // PR17: muestras persistidas, separadas de las unidades de inventario.
+      if (path === '/api/samples' || path.startsWith('/api/samples/')) {
+        const { user } = authenticate(request);
+        if (user.role !== 'nursing') {
+          throw new ApiError(403, 'Tu perfil no puede gestionar muestras.');
+        }
+        if (path === '/api/samples' && request.method === 'POST') {
+          const datos = await readBody(request);
+          let item;
+          store.update(db => { item = registrarMuestra(db, datos, user, clock); });
+          send(201, { item });
+          return;
+        }
+        if (request.method === 'GET') {
+          const db = store.read();
+          let items = db.records.filter(item => item.module === 'samples' && item.scopeId === user.siteId);
+          if (path !== '/api/samples') {
+            const item = items.find(item => item.id === path.slice('/api/samples/'.length));
+            if (!item) throw new ApiError(404, 'Muestra no encontrada.');
+            send(200, { item });
+            return;
+          }
+          const donacionId = url.searchParams.get('donacionId');
+          if (donacionId !== null) {
+            donacionDeSede(db, donacionId, user.siteId);
+            items = items.filter(item => item.donacionId === donacionId);
+          }
+          send(200, { items });
+          return;
+        }
         throw new ApiError(405, 'Operación no implementada.');
       }
 

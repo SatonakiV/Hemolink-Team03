@@ -6,22 +6,23 @@ void main() {
     final fecha = DateTime(2026, 11, 3);
 
     test('UT04.3-A: el componente de dominio ejercita y mantiene separadas las colecciones de muestras y unidades', () {
-      final registro = RegistroMuestrasDominio();
+      final registro = RegistroMuestrasDominio(
+        existeDonacion: (id) => id == 'DON-123',
+      );
       final muestra = Muestra(
         codigo: 'M-001',
         donacionId: 'DON-123',
         responsableId: 'enfermeria-01',
         fechaRegistro: fecha,
       );
-      final unidad = UnidadSangre(
-        codigo: 'U-001',
-        donacionId: 'DON-123',
-      );
+      final unidad = UnidadSangre(codigo: 'U-001', donacionId: 'DON-123');
 
       registro.registrarMuestra(muestra);
 
       final entidadesMixtas = <dynamic>[muestra, unidad];
-      final unidadesElegibles = RegistroMuestrasDominio.obtenerUnidadesElegiblesParaStock(entidadesMixtas);
+      final unidadesElegibles = RegistroMuestrasDominio.obtenerUnidades(
+        entidadesMixtas,
+      );
 
       expect(registro.muestras, contains(muestra));
       expect(registro.muestras, isNot(contains(unidad)));
@@ -29,51 +30,51 @@ void main() {
       expect(unidadesElegibles, isNot(contains(muestra)));
     });
 
-    test('UT04.3-B: la consulta de componentes de stock excluye explícitamente la muestra aunque compartan donación', () {
+    test('UT04.3-B: el separador excluye la muestra aunque comparta donación con una unidad', () {
       final muestra = Muestra(
         codigo: 'M-001',
         donacionId: 'DON-999',
         responsableId: 'enfermeria-01',
         fechaRegistro: fecha,
       );
-      final unidad = UnidadSangre(
-        codigo: 'U-001',
-        donacionId: 'DON-999',
-      );
+      final unidad = UnidadSangre(codigo: 'U-001', donacionId: 'DON-999');
 
       final entidadesDonacion = [muestra, unidad];
-      final unidadesParaInventarioReservaDespacho =
-          RegistroMuestrasDominio.obtenerUnidadesElegiblesParaStock(entidadesDonacion);
-
-      expect(unidadesParaInventarioReservaDespacho.length, 1);
-      expect(unidadesParaInventarioReservaDespacho.first.codigo, 'U-001');
-      expect(unidadesParaInventarioReservaDespacho, isNot(contains(muestra)));
-    });
-
-    test('UT04.3-C: el contrato esElegibleParaStock distingue entre una UnidadSangre válida (true) y una Muestra (false)', () {
-      final muestra = Muestra(
-        codigo: 'M-001',
-        donacionId: 'DON-123',
-        responsableId: 'enfermeria-01',
-        fechaRegistro: fecha,
-      );
-      final unidad = UnidadSangre(
-        codigo: 'U-001',
-        donacionId: 'DON-123',
+      final unidades = RegistroMuestrasDominio.obtenerUnidades(
+        entidadesDonacion,
       );
 
-      // Muestra jamás es elegible para stock, reserva ni despacho
-      expect(esElegibleParaStock(muestra), isFalse);
-
-      // Una UnidadSangre sí es elegible para stock
-      expect(esElegibleParaStock(unidad), isTrue);
-
-      // Cualquier otro tipo desconocido es rechazado
-      expect(esElegibleParaStock('objeto-invalido'), isFalse);
+      expect(unidades.length, 1);
+      expect(unidades.first.codigo, 'U-001');
+      expect(unidades, isNot(contains(muestra)));
     });
+
+    test(
+      'UT04.3-C: esUnidadSangre distingue tipos sin afirmar disponibilidad',
+      () {
+        final muestra = Muestra(
+          codigo: 'M-001',
+          donacionId: 'DON-123',
+          responsableId: 'enfermeria-01',
+          fechaRegistro: fecha,
+        );
+        final unidad = UnidadSangre(codigo: 'U-001', donacionId: 'DON-123');
+
+        // Muestra y unidad son tipos distintos.
+        expect(esUnidadSangre(muestra), isFalse);
+
+        // Reconocer una unidad no verifica su estado ni su vencimiento.
+        expect(esUnidadSangre(unidad), isTrue);
+
+        // Cualquier otro tipo desconocido es rechazado
+        expect(esUnidadSangre('objeto-invalido'), isFalse);
+      },
+    );
 
     test('UT04.3-D: rechazo de códigos duplicados y donación/código inválido en muestras', () {
-      final registro = RegistroMuestrasDominio();
+      final registro = RegistroMuestrasDominio(
+        existeDonacion: (id) => id == 'DON-123',
+      );
       final muestraValida = Muestra(
         codigo: '  M-001  ',
         donacionId: '  DON-123  ',
@@ -96,6 +97,20 @@ void main() {
         () => registro.registrarMuestra(muestraDuplicada),
         throwsA(isA<ArgumentError>()),
       );
+
+      // Un identificador no vacío tampoco basta si no existe el origen.
+      expect(
+        () => registro.registrarMuestra(
+          Muestra(
+            codigo: 'M-HUERFANA',
+            donacionId: 'DON-INEXISTENTE',
+            responsableId: 'enfermeria-01',
+            fechaRegistro: fecha,
+          ),
+        ),
+        throwsArgumentError,
+      );
+      expect(registro.muestras, [muestraValida]);
 
       // Rechazar código de muestra vacío
       expect(

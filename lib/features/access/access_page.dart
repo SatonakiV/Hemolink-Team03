@@ -1,8 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 
 import '../../core/access/access_policy.dart';
 import '../../core/access/app_user.dart';
 import '../../core/access/auth_session.dart';
+import '../donantes/data/crear_repositorio_donantes.dart';
+import '../donantes/data/donante_repository.dart';
+import '../donantes/presentation/donantes_page.dart';
 
 const moduleNames = {
   'donors': 'Donantes',
@@ -12,8 +16,9 @@ const moduleNames = {
 };
 
 class AccessPage extends StatefulWidget {
-  const AccessPage({super.key, this.session});
+  const AccessPage({super.key, this.session, this.donantes});
   final AuthSession? session;
+  final DonanteRepository? donantes;
 
   @override
   State<AccessPage> createState() => _AccessPageState();
@@ -21,6 +26,10 @@ class AccessPage extends StatefulWidget {
 
 class _AccessPageState extends State<AccessPage> {
   late final _session = widget.session ?? AuthSession();
+  late final _donorClient = http.Client();
+  late final _donantes =
+      widget.donantes ??
+      crearRepositorioDonantes(sesion: _session, cliente: _donorClient);
   final _formKey = GlobalKey<FormState>();
   final _email = TextEditingController();
   final _password = TextEditingController();
@@ -108,6 +117,7 @@ class _AccessPageState extends State<AccessPage> {
   void dispose() {
     _email.dispose();
     _password.dispose();
+    if (widget.donantes == null) _donorClient.close();
     if (widget.session == null) _session.dispose();
     super.dispose();
   }
@@ -258,6 +268,15 @@ class _AccessPageState extends State<AccessPage> {
                                 child: OutlinedButton(
                                   onPressed: _busy
                                       ? null
+                                      : module == 'donors'
+                                      ? () => Navigator.of(context).push(
+                                          MaterialPageRoute<void>(
+                                            builder: (_) => DonantesPage(
+                                              sesion: _session,
+                                              repositorio: _donantes,
+                                            ),
+                                          ),
+                                        )
                                       : () => _perform(() async {
                                           _module = module;
                                           _items = null;
