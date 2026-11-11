@@ -3,11 +3,14 @@ import { randomUUID } from 'node:crypto';
 import { JsonStore } from './json-store.mjs';
 import { fechaValida, fechaLocal } from './dates.mjs';
 import { DonanteError, normalizarRut, rutValido, validarDonante } from './donors.mjs';
+import { DonacionError, validarDonacion, registrarDonacion, detalleDonacion } from './donations.mjs';
 import { donacionDeSede, registrarMuestra } from './samples.mjs';
 import {
   matchesPassword, passwordHash, tokenHash, newToken,
   publicUser, isAuthorizedUser, roleModules, seedDemoData,
 } from './auth.mjs';
+
+const ID_VALIDO = /^[A-Za-z0-9_-]{1,64}$/;
 
 class ApiError extends Error {
   constructor(status, message) {
@@ -386,6 +389,41 @@ export function createApplication({
         throw new ApiError(405, 'Operación no implementada.');
       }
 
+      // T03.1: donaciones y unidades, solo para enfermería. La sede y el responsable
+      // salen de la sesión; el vencimiento lo calcula el servidor.
+      if (path === '/api/donations' || path.startsWith('/api/donations/')) {
+        const { user } = authenticate(request);
+        if (!roleModules[user.role]?.includes('donations')) {
+          throw new ApiError(403, 'Tu perfil no puede gestionar donaciones.');
+        }
+
+        if (path === '/api/donations' && request.method === 'POST') {
+          const datos = validarDonacion(await readBody(request), fechaLocal(clock));
+          const id = randomUUID();
+          store.update(db => registrarDonacion(db, user, datos, {
+            id, nuevoIdUnidad: randomUUID, ahora: new Date(clock()).toISOString(),
+          }));
+          send(201, { item: detalleDonacion(store.read(), user, id) });
+          return;
+        }
+
+        if (request.method === 'GET') {
+          const db = store.read();
+          if (path === '/api/donations') {
+            const items = db.records.filter(r =>
+              r.module === 'donations' && r.scopeId === user.siteId).reverse();
+            send(200, { items });
+            return;
+          }
+          const id = path.slice('/api/donations/'.length);
+          const item = ID_VALIDO.test(id) ? detalleDonacion(db, user, id) : null;
+          if (!item) throw new ApiError(404, 'Donación no encontrada.');
+          send(200, { item });
+          return;
+        }
+        throw new ApiError(405, 'Operación no implementada.');
+      }
+
       // Se conservan los módulos de consulta existentes.
       const module = path.startsWith('/api/') ? path.slice(5) : '';
 
@@ -420,7 +458,8 @@ export function createApplication({
         message: error.status
           ? error.message
           : 'No se pudo completar la operación.',
-        ...(error instanceof DonanteError ? { errors: error.errors } : {}),
+        ...(error instanceof DonanteError || error instanceof DonacionError
+          ? { errors: error.errors } : {}),
       });
     }
   });
