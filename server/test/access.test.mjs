@@ -31,23 +31,36 @@ async function fixture(t, options = {}) {
       await new Promise(resolve => application.server.close(resolve));
       await start(false);
     },
-    async request(path, { token, body, method = 'GET', origin } = {}) {
+    async request(path, { token, body, method = 'GET', origin, preflightMethod } = {}) {
       const response = await fetch(base + path, {
         method,
         headers: {
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
           ...(body ? { 'Content-Type': 'application/json' } : {}),
           ...(origin ? { Origin: origin } : {}),
+          ...(preflightMethod ? { 'Access-Control-Request-Method': preflightMethod, 'Access-Control-Request-Headers': 'authorization, content-type' } : {}),
         },
         body: body ? JSON.stringify(body) : undefined,
       });
-      return { status: response.status, data: await response.json() };
+      return { status: response.status, data: response.status === 204 ? null : await response.json(), headers: response.headers };
     },
     async login(email = 'enfermeria@hemolink.test', secret = password) {
       return this.request('/api/login', { method: 'POST', body: { email, password: secret } });
     },
   };
 }
+
+test('CORS: preflight permite PUT desde el origen web configurado y rechaza origen ajeno', async t => {
+  const f = await fixture(t);
+  const preflight = await f.request('/api/donors/D001', { method: 'OPTIONS', origin: 'http://localhost:5173', preflightMethod: 'PUT' });
+  assert.equal(preflight.status, 204);
+  assert.equal(preflight.headers.get('access-control-allow-origin'), 'http://localhost:5173');
+  assert.ok(preflight.headers.get('access-control-allow-methods').split(',').map(s => s.trim()).includes('PUT'));
+  assert.match(preflight.headers.get('access-control-allow-headers'), /Authorization/);
+  const ajeno = await f.request('/api/donors/D001', { method: 'OPTIONS', origin: 'http://ajeno.test' });
+  assert.equal(ajeno.status, 403);
+  assert.equal(ajeno.headers.get('access-control-allow-origin'), null);
+});
 
 test('UT01.1-A: credenciales verificadas crean sesión con rol y sede', async t => {
   const f = await fixture(t);

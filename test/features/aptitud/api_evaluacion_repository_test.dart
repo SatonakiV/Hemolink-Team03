@@ -121,6 +121,52 @@ void main() {
     cliente.close();
   });
 
+  test('API3B: buscarHistorial recupera todas las evaluaciones', () async {
+    final segundaEvaluacion = {
+      ...evaluacionJson,
+      'id': 'EV002',
+      'resultado': 'rechazado',
+      'fechaEvaluacion': '2026-11-04',
+      'fechaRegistro': '2026-11-09T15:00:00.000Z',
+      'fechaFinVigencia': null,
+    };
+
+    final cliente = MockClient((solicitud) async {
+      expect(solicitud.method, 'GET');
+      expect(solicitud.url.path, '/api/evaluations');
+      expect(
+        solicitud.url.queryParameters['donanteId'],
+        'D001',
+      );
+
+      return http.Response(
+        jsonEncode({
+          'items': [
+            segundaEvaluacion,
+            evaluacionJson,
+          ],
+        }),
+        200,
+      );
+    });
+
+    final repositorio = crearRepositorio(cliente);
+
+    final historial = await repositorio.buscarHistorial('D001');
+
+    expect(historial.length, 2);
+    expect(historial[0].id, 'EV002');
+    expect(historial[1].id, 'EV001');
+    expect(
+      historial[0].resultado,
+      ResultadoAptitud.rechazado,
+    );
+
+    cliente.close();
+  });
+
+
+
   test('API4: propaga el rechazo HTTP 403 del servidor', () async {
     final cliente = MockClient((solicitud) async {
       return http.Response(

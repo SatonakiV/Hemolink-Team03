@@ -21,6 +21,8 @@ class ValidadorDonante {
     required String id,
     required String usuarioRegistroId,
     required DateTime fechaRegistro,
+    String? usuarioModificacionId,
+    DateTime? fechaModificacion,
     DateTime? fechaActual,
   }) {
     final normalizados = validarDatos(datos, fechaActual: fechaActual);
@@ -43,6 +45,8 @@ class ValidadorDonante {
       telefono: normalizados.telefono!,
       usuarioRegistroId: usuarioRegistroId.trim(),
       fechaRegistro: fechaRegistro,
+      usuarioModificacionId: usuarioModificacionId?.trim(),
+      fechaModificacion: fechaModificacion,
     );
   }
 

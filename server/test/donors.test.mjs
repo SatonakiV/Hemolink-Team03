@@ -258,3 +258,68 @@ test('T01.2/HU02: un donante creado por API admite una evaluación de aptitud', 
   const result = await f.api(`/api/evaluations?donanteId=${saved.data.item.id}`);
   assert.equal(result.data.items[0].id, 'EV_DONANTE');
 });
+
+test('T04.4: PUT /api/donors/:id actualiza datos, conserva id y metadatos, registra modificador y verifica unicidad de RUT', async t => {
+  const f = await fixture(t);
+  // Crear donante 1
+  const d1 = await f.api('/api/donors', { method: 'POST', body: donor });
+  assert.equal(d1.status, 201);
+  const id1 = d1.data.item.id;
+
+  // Crear donante 2 con otro RUT (22.222.222-2)
+  const d2 = await f.api('/api/donors', {
+    method: 'POST',
+    body: { ...donor, rut: '22.222.222-2', nombre: 'Segundo Donante' },
+  });
+  assert.equal(d2.status, 201);
+  const id2 = d2.data.item.id;
+
+  // UT04.4-B: Intentar actualizar d1 usando el RUT de d2 (o de la semilla) debe fallar con 409
+  const conflicto = await f.api(`/api/donors/${id1}`, {
+    method: 'PUT',
+    body: { ...donor, rut: '22.222.222-2', nombre: 'Conflicto' },
+  });
+  assert.equal(conflicto.status, 409);
+  assert.equal(conflicto.data.errors?.rut, 'Ya existe un donante con ese RUT.');
+
+  // UT04.4-C: Campos inválidos se rechazan con 400 sin alterar la versión guardada
+  const invalido = await f.api(`/api/donors/${id1}`, {
+    method: 'PUT',
+    body: { ...donor, pesoKg: -10, grupoAbo: 'INVALIDO' },
+  });
+  assert.equal(invalido.status, 400);
+
+  // UT04.4-A: Actualización exitosa manteniendo el mismo RUT (incluso con otro formato)
+  const actualizacion = await f.api(`/api/donors/${id1}`, {
+    method: 'PUT',
+    body: {
+      ...donor,
+      rut: ' 12345678-5 ', // Mismo RUT sin puntos y con espacios
+      nombre: 'Donante Modificado',
+      pesoKg: 75,
+      grupoAbo: 'A',
+      factorRh: 'positivo',
+      telefono: '999888777',
+    },
+  });
+  assert.equal(actualizacion.status, 200, JSON.stringify(actualizacion.data));
+  const actualizado = actualizacion.data.item;
+  assert.equal(actualizado.id, id1);
+  assert.equal(actualizado.nombre, 'Donante Modificado');
+  assert.equal(actualizado.pesoKg, 75);
+  assert.equal(actualizado.grupoAbo, 'A');
+  assert.equal(actualizado.usuarioRegistroId, d1.data.item.usuarioRegistroId);
+  assert.equal(actualizado.fechaRegistro, d1.data.item.fechaRegistro);
+  assert.equal(actualizado.usuarioModificacionId, 'nursing-demo');
+  assert.ok(actualizado.fechaModificacion);
+
+  // Reiniciar servidor y comprobar persistencia
+  await f.restart();
+  const recuperado = await f.api(`/api/donors/${id1}`);
+  assert.equal(recuperado.status, 200);
+  assert.equal(recuperado.data.item.nombre, 'Donante Modificado');
+  assert.equal(recuperado.data.item.pesoKg, 75);
+  assert.equal(recuperado.data.item.grupoAbo, 'A');
+  assert.equal(recuperado.data.item.usuarioModificacionId, 'nursing-demo');
+});
+
