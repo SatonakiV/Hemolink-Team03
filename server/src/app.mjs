@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { JsonStore } from './json-store.mjs';
 import { fechaValida, fechaLocal } from './dates.mjs';
 import { DonanteError, normalizarRut, rutValido, validarDonante } from './donors.mjs';
-import { DonacionError, validarDonacion, registrarDonacion, detalleDonacion } from './donations.mjs';
+import { DonacionError, validarDonacion, registrarDonacion, detalleDonacion, confirmacionPrevia} from './donations.mjs';
 import { donacionDeSede, registrarMuestra } from './samples.mjs';
 import {
   matchesPassword, passwordHash, tokenHash, newToken,
@@ -399,6 +399,11 @@ export function createApplication({
 
         if (path === '/api/donations' && request.method === 'POST') {
           const datos = validarDonacion(await readBody(request), fechaLocal(clock));
+          const previa= confirmacionPrevia(store.read(),user,datos);
+          if(previa){
+            send(200, { item: detalleDonacion(store.read(), user, previa.id) });
+            return;
+          }
           const id = randomUUID();
           store.update(db => registrarDonacion(db, user, datos, {
             id, nuevoIdUnidad: randomUUID, ahora: new Date(clock()).toISOString(),
