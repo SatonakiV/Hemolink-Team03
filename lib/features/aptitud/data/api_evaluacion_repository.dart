@@ -3,7 +3,6 @@ import 'package:http/http.dart' as http;
 import '../domain/evaluacion_aptitud.dart';
 import 'evaluacion_repository.dart';
 
-// Error producido al comunicarse con el backend.
 class EvaluacionApiException implements Exception {
   final int? codigo;
   final String mensaje;
@@ -14,8 +13,8 @@ class EvaluacionApiException implements Exception {
   String toString() => mensaje;
 }
 
-// Implementación HTTP del contrato EvaluacionRepository.
-class ApiEvaluacionRepository implements EvaluacionRepository {
+class ApiEvaluacionRepository
+    implements EvaluacionRepository, HistorialEvaluacionRepository {
   final http.Client cliente;
   final Future<String?> Function() obtenerToken;
   final String urlBase;
@@ -29,21 +28,19 @@ class ApiEvaluacionRepository implements EvaluacionRepository {
     ),
   });
 
-  // Convierte DateTime al formato YYYY-MM-DD del servidor.
   String _fecha(DateTime fecha) {
     final anio = fecha.year.toString().padLeft(4, '0');
     final mes = fecha.month.toString().padLeft(2, '0');
     final dia = fecha.day.toString().padLeft(2, '0');
+
     return '$anio-$mes-$dia';
   }
 
-  // Convierte un campo de fecha JSON a DateTime.
   DateTime? _fechaOpcional(Object? valor) {
     if (valor == null) return null;
     return DateTime.parse(valor as String);
   }
 
-  // Convierte la respuesta JSON del backend al modelo Dart.
   EvaluacionAptitud _desdeJson(Map<String, dynamic> datos) {
     final resultado = ResultadoAptitud.values.byName(
       datos['resultado'] as String,
@@ -56,8 +53,12 @@ class ApiEvaluacionRepository implements EvaluacionRepository {
       fechaEvaluacion: DateTime.parse(
         datos['fechaEvaluacion'] as String,
       ),
-      fechaFinVigencia: _fechaOpcional(datos['fechaFinVigencia']),
-      fechaHabilitacion: _fechaOpcional(datos['fechaHabilitacion']),
+      fechaFinVigencia: _fechaOpcional(
+        datos['fechaFinVigencia'],
+      ),
+      fechaHabilitacion: _fechaOpcional(
+        datos['fechaHabilitacion'],
+      ),
       responsableId: datos['responsableId'] as String,
       fechaRegistro: DateTime.parse(
         datos['fechaRegistro'] as String,
@@ -65,7 +66,6 @@ class ApiEvaluacionRepository implements EvaluacionRepository {
     );
   }
 
-  // Solicita el token del usuario que inició sesión.
   Future<Map<String, String>> _encabezados() async {
     final token = await obtenerToken();
 
@@ -82,7 +82,6 @@ class ApiEvaluacionRepository implements EvaluacionRepository {
     };
   }
 
-  // Verifica el resultado de una solicitud HTTP.
   Map<String, dynamic> _procesarRespuesta(
     http.Response respuesta, {
     int? estadoEsperado,
@@ -107,7 +106,8 @@ class ApiEvaluacionRepository implements EvaluacionRepository {
     }
 
     final correcto = estadoEsperado == null
-        ? respuesta.statusCode >= 200 && respuesta.statusCode < 300
+        ? respuesta.statusCode >= 200 &&
+            respuesta.statusCode < 300
         : respuesta.statusCode == estadoEsperado;
 
     if (!correcto) {
@@ -122,7 +122,6 @@ class ApiEvaluacionRepository implements EvaluacionRepository {
     return datos;
   }
 
-  // Registra una nueva evaluación en el backend.
   @override
   Future<void> guardar(EvaluacionAptitud evaluacion) async {
     final uri = Uri.parse('$urlBase/api/evaluations');
@@ -151,7 +150,7 @@ class ApiEvaluacionRepository implements EvaluacionRepository {
         respuesta,
         estadoEsperado: 201,
       );
-    } on http.ClientException catch (_) {
+    } on http.ClientException {
       throw const EvaluacionApiException(
         null,
         'No fue posible conectar con el servidor.',
@@ -159,7 +158,6 @@ class ApiEvaluacionRepository implements EvaluacionRepository {
     }
   }
 
-  // Busca una evaluación mediante su identificador.
   @override
   Future<EvaluacionAptitud?> buscarPorId(String id) async {
     final uri = Uri.parse(
@@ -181,7 +179,7 @@ class ApiEvaluacionRepository implements EvaluacionRepository {
       return _desdeJson(
         datos['item'] as Map<String, dynamic>,
       );
-    } on http.ClientException catch (_) {
+    } on http.ClientException {
       throw const EvaluacionApiException(
         null,
         'No fue posible conectar con el servidor.',
@@ -189,9 +187,9 @@ class ApiEvaluacionRepository implements EvaluacionRepository {
     }
   }
 
-  // Recupera la última evaluación registrada del donante.
+  /// Recupera todas las evaluaciones de un donante.
   @override
-  Future<EvaluacionAptitud?> buscarActual(
+  Future<List<EvaluacionAptitud>> buscarHistorial(
     String donanteId,
   ) async {
     final uri = Uri.parse(
@@ -207,21 +205,34 @@ class ApiEvaluacionRepository implements EvaluacionRepository {
       );
 
       final datos = _procesarRespuesta(respuesta);
-      final historial = datos['items'] as List<dynamic>;
+      final items = datos['items'] as List<dynamic>;
 
-      if (historial.isEmpty) {
-        return null;
-      }
-
-      // El servidor devuelve primero la última incorporada al historial.
-      return _desdeJson(
-        historial.first as Map<String, dynamic>,
-      );
-    } on http.ClientException catch (_) {
+      return items
+          .map(
+            (item) => _desdeJson(
+              item as Map<String, dynamic>,
+            ),
+          )
+          .toList(growable: false);
+    } on http.ClientException {
       throw const EvaluacionApiException(
         null,
         'No fue posible conectar con el servidor.',
       );
     }
+  }
+
+  /// Recupera la última evaluación registrada.
+  @override
+  Future<EvaluacionAptitud?> buscarActual(
+    String donanteId,
+  ) async {
+    final historial = await buscarHistorial(donanteId);
+
+    if (historial.isEmpty) {
+      return null;
+    }
+
+    return historial.first;
   }
 }
