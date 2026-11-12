@@ -1,3 +1,13 @@
+import 'dart:convert';
+import 'dart:math';
+
+const vidaUtilDias=42;
+DateTime calcularVencimiento(DateTime extraccion) => DateTime.utc(extraccion.year, extraccion.month, extraccion.day).add(Duration(days: vidaUtilDias));
+String  generarClaveConfirmacion([Random? aleatorio]) {
+  final rnd= aleatorio ?? Random.secure();
+  final bytes=List<int>.generate(18, (_) => rnd.nextInt(256));
+  return base64Url.encode(bytes).replaceAll('=','');
+}
 enum EstadoUnidad { disponible, reservada, despachada, vencida }
 
 // Unidad obtenida de una donación. Conserva el grupo ABO/Rh de ORIGEN: es una
@@ -53,6 +63,7 @@ class Donacion {
 // Entrada del formulario. 
 // El servidor obtiene sede,responsable,grupo y vencimiento de la sesión, del donante y del cálculo.
 class DatosDonacion {
+  final String claveConfirmacion;
   final String donanteId;
   final String evaluacionId;
   final DateTime fechaExtraccion;
@@ -60,6 +71,7 @@ class DatosDonacion {
   final List<String> codigosUnidades;
 
   DatosDonacion({
+    required this.claveConfirmacion,
     required this.donanteId,
     required this.evaluacionId,
     required this.fechaExtraccion,

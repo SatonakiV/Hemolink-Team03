@@ -72,7 +72,7 @@ class ApiDonacionRepository implements DonacionRepository {
     String ruta, {
     required T Function(Map<String, dynamic>) convertir,
     Map<String, dynamic>? cuerpo,
-    int estadoEsperado = 200,
+    Set<int> estadosEsperados = const {200},
     T Function()? siAusente,
   }) async {
     final token = await obtenerToken();
@@ -114,7 +114,7 @@ class ApiDonacionRepository implements DonacionRepository {
     try {
       final datos =
           jsonDecode(utf8.decode(respuesta.bodyBytes)) as Map<String, dynamic>;
-      if (respuesta.statusCode != estadoEsperado) {
+      if (!estadosEsperados.contains(respuesta.statusCode)) {
         final errores = datos['errors'];
         throw DonacionApiException(
           respuesta.statusCode,
@@ -150,8 +150,9 @@ class ApiDonacionRepository implements DonacionRepository {
   @override
   Future<Donacion> guardar(DatosDonacion datos) => _solicitar(
     '',
-    estadoEsperado: 201,
+    estadosEsperados: const {200,201},
     cuerpo: {
+      'claveConfirmacion': datos.claveConfirmacion,
       'donanteId': datos.donanteId,
       'evaluacionId': datos.evaluacionId,
       'fechaExtraccion': _fecha(datos.fechaExtraccion),
@@ -167,6 +168,5 @@ class ApiDonacionRepository implements DonacionRepository {
   Future<Donacion?> buscarPorId(String id) => _solicitar(
     '/${Uri.encodeComponent(id)}',
     siAusente: () => null,
-    convertir: (datos) => _desdeJson(datos['item']),
-  );
+    convertir: (datos) => _desdeJson(datos['item']),);
 }

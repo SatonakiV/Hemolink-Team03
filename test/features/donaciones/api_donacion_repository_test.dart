@@ -48,6 +48,7 @@ void main() {
   );
 
   final datos = DatosDonacion(
+    claveConfirmacion: 'clave-prueba-0001',
     donanteId: 'D-1',
     evaluacionId: 'EV001',
     fechaExtraccion: DateTime(2026, 11, 3),
@@ -61,6 +62,7 @@ void main() {
       expect(solicitud.url.path, '/api/donations');
       expect(solicitud.headers['Authorization'], 'Bearer token-prueba');
       final cuerpo = jsonDecode(solicitud.body) as Map<String, dynamic>;
+      expect(cuerpo['claveConfirmacion'], 'clave-prueba-0001');
       expect(cuerpo['fechaExtraccion'], '2026-11-03');
       expect(cuerpo['volumenMl'], 450);
       expect(cuerpo['unidades'], [
@@ -131,5 +133,20 @@ void main() {
       crear(cliente).guardar(datos),
       throwsA(isA<DonacionApiException>()),
     );
+  });
+
+  test('UT03.2-E: una repeticion(200) devuelve la donación existente', () async {
+    var llamadas=0;
+    final cliente= MockClient((solicitud) async{
+      llamadas+=1;
+      final cuerpo=jsonDecode(solicitud.body) as Map<String,dynamic>;
+      expect(cuerpo['claveConfirmacion'],'clave-prueba-0001');
+      return _json({'item': donacionJson}, llamadas==1 ? 201 : 200);
+    });
+    final repo=crear(cliente);
+    final primera=await repo.guardar(datos);
+    final repetida=await repo.guardar(datos);
+    expect(repetida.id, primera.id);
+    expect(llamadas, 2);
   });
 }

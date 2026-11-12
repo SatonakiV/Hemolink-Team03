@@ -2,6 +2,7 @@ import { fechaValida, sumarDias } from './dates.mjs';
 export const VIDA_UTIL_DIAS = 42;
 const ID = /^[A-Za-z0-9_-]{1,64}$/;
 const CODIGO = /^[A-Za-z0-9_-]{1,32}$/;
+const CLAVE= /^[A-Za-z0-9_-]{16,64}$/;
 const MAX_UNIDADES = 20;
 export class DonacionError extends Error {
   constructor(status, message, errors) {
@@ -16,6 +17,9 @@ export class DonacionError extends Error {
  */
 export function validarDonacion(datos, hoy) {
   const errors = {};
+  if(typeof datos.claveConfirmacion !== 'string' || !CLAVE.test(datos.claveConfirmacion)){
+    errors.claveConfirmacion = 'La clave de confirmación no es válida.';
+  }
   if (typeof datos.donanteId !== 'string' || !ID.test(datos.donanteId)) {
     errors.donanteId = 'Selecciona un donante válido.';
   }
@@ -67,6 +71,7 @@ export function validarDonacion(datos, hoy) {
     throw new DonacionError(400, 'Revisa los datos de la donación.', errors);
   }
   return {
+    claveConfirmacion: datos.claveConfirmacion,
     donanteId: datos.donanteId,
     evaluacionId: datos.evaluacionId,
     fechaExtraccion: datos.fechaExtraccion,
@@ -75,6 +80,22 @@ export function validarDonacion(datos, hoy) {
     unidades,
   };
 }
+
+const huella = (d, codigos) => JSON.stringify([d.donanteId, d.evaluacionId, d.fechaExtraccion, d.volumenMl,
+  codigos.map(c => c.toLowerCase()).sort(),]);
+
+//Si esta clave ya confirmo una donacion de la sede, devuelve esa donacion.
+//Si la clave se uso con otros datos, es un conflicto.
+export function confirmacionPrevia(db, user, datos){
+  const previa= db.records.find(r=>r.module==='donations' && r.scopeId===user.siteId && r.claveConfirmacion===datos.claveConfirmacion);
+  if(!previa) return null;
+  const codigos= db.records.filter(r=>r.module==='inventory' && r.donacionId===previa.id).map(r=>r.codigo);
+  if(huella(previa,codigos) !== huella(datos,datos.unidades.map(u=>u.codigo))){
+    throw new DonacionError(409,'La clave de confirmación ya se usó con otros datos.');
+  }
+  return previa;
+}
+
 
 // Regla de HU02 en el servidor: apto y extracción dentro del intervalo.
 export function aptitudPermiteExtraer(evaluacion, fechaExtraccion) {
@@ -87,6 +108,9 @@ export function aptitudPermiteExtraer(evaluacion, fechaExtraccion) {
 // Persiste donación y unidades como un solo cambio. Debe ejecutarse dentro de store.update: si lanza, nada se escribe.
 export function registrarDonacion(db, user, datos, { id, nuevoIdUnidad, ahora }) {
   const sede = user.siteId;
+  if(confirmacionPrevia(db,user,datos)){
+    throw new DonacionError(409,'La donacion ya fue confirmada.');
+  } 
   if (datos.sedeId !== undefined && datos.sedeId !== sede) {
     throw new DonacionError(409, 'La sede indicada no coincide con la de tu cuenta.');
   }
@@ -130,6 +154,7 @@ export function registrarDonacion(db, user, datos, { id, nuevoIdUnidad, ahora })
 
   const donacion = {
     id, module: 'donations', scopeId: sede, sedeId: sede,
+    claveConfirmacion: datos.claveConfirmacion,
     label: `Donación ${datos.fechaExtraccion} · ${datos.unidades.length} unidad(es)`,
     donanteId: donante.id, evaluacionId: evaluacion.id,
     fechaExtraccion: datos.fechaExtraccion, volumenMl: datos.volumenMl,
