@@ -9,7 +9,7 @@ class MuestraApiException implements Exception {
   final String mensaje;
   final Map<String, String> errores;
 
-  const MuestraApiException(
+  MuestraApiException(
     this.codigo,
     this.mensaje, {
     Map<String, String> errores = const {},
@@ -58,7 +58,7 @@ class ApiMuestraRepository implements MuestraRepository {
   }) async {
     final token = await obtenerToken();
     if (token == null || token.trim().isEmpty) {
-      throw const MuestraApiException(
+      throw MuestraApiException(
         401,
         'Debes iniciar sesión para gestionar muestras.',
       );
@@ -83,12 +83,12 @@ class ApiMuestraRepository implements MuestraRepository {
                     ))
               .timeout(tiempoEspera);
     } on TimeoutException {
-      throw const MuestraApiException(
+      throw MuestraApiException(
         null,
         'El servidor tardó demasiado. Vuelve a intentar.',
       );
     } on http.ClientException {
-      throw const MuestraApiException(
+      throw MuestraApiException(
         null,
         'No fue posible conectar con el servidor.',
       );
