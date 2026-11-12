@@ -13,7 +13,7 @@ class Muestra {
     required String donacionId,
     this.donanteId = '',
     this.scopeId = '',
-    required this.responsableId,
+    required String responsableId,
     required this.fechaRegistro,
   }) : codigo = codigo.trim(),
        donacionId = donacionId.trim(),
