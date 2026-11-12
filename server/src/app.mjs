@@ -130,7 +130,7 @@ export function createApplication({
       if (origin) response.setHeader('Access-Control-Allow-Origin', origin);
 
       if (request.method === 'OPTIONS') {
-        response.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+        response.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, OPTIONS');
         response.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
         response.writeHead(204);
         response.end();
