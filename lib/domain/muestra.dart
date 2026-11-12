@@ -1,12 +1,18 @@
 class Muestra {
+  final String id;
   final String codigo;
   final String donacionId;
+  final String donanteId;
+  final String scopeId;
   final String responsableId;
   final DateTime fechaRegistro;
 
   Muestra({
+    this.id = '',
     required String codigo,
     required String donacionId,
+    this.donanteId = '',
+    this.scopeId = '',
     required String responsableId,
     required this.fechaRegistro,
   }) : codigo = codigo.trim(),
