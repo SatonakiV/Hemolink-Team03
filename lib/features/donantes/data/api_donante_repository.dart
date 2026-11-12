@@ -67,12 +67,17 @@ class ApiDonanteRepository implements DonanteRepository {
       id: datos['id'] as String,
       usuarioRegistroId: datos['usuarioRegistroId'] as String,
       fechaRegistro: DateTime.parse(datos['fechaRegistro'] as String),
+      usuarioModificacionId: datos['usuarioModificacionId'] as String?,
+      fechaModificacion: datos['fechaModificacion'] != null
+          ? DateTime.parse(datos['fechaModificacion'] as String)
+          : null,
     );
   }
 
   Future<T> _solicitar<T>(
     String ruta, {
     required T Function(Map<String, dynamic>) convertir,
+    String metodo = 'GET',
     Map<String, dynamic>? cuerpo,
     Map<String, String>? filtros,
     int estadoEsperado = 200,
@@ -93,15 +98,23 @@ class ApiDonanteRepository implements DonanteRepository {
     };
     http.Response respuesta;
     try {
-      respuesta =
-          await (cuerpo == null
-                  ? cliente.get(uri, headers: encabezados)
-                  : cliente.post(
-                      uri,
-                      headers: encabezados,
-                      body: jsonEncode(cuerpo),
-                    ))
-              .timeout(tiempoEspera);
+      final Future<http.Response> llamada;
+      if (metodo == 'POST') {
+        llamada = cliente.post(
+          uri,
+          headers: encabezados,
+          body: jsonEncode(cuerpo),
+        );
+      } else if (metodo == 'PUT') {
+        llamada = cliente.put(
+          uri,
+          headers: encabezados,
+          body: jsonEncode(cuerpo),
+        );
+      } else {
+        llamada = cliente.get(uri, headers: encabezados);
+      }
+      respuesta = await llamada.timeout(tiempoEspera);
     } on TimeoutException {
       throw DonanteApiException(
         null,
@@ -159,7 +172,35 @@ class ApiDonanteRepository implements DonanteRepository {
     final entrada = _validador.validarDatos(datos);
     return _solicitar(
       '',
+      metodo: 'POST',
       estadoEsperado: 201,
+      cuerpo: {
+        'rut': entrada.rut,
+        'nombre': entrada.nombre,
+        'fechaNacimiento': _fecha(entrada.fechaNacimiento!),
+        'pesoKg': entrada.pesoKg,
+        'grupoAbo': entrada.grupoAbo,
+        'factorRh': entrada.factorRh,
+        'telefono': entrada.telefono,
+      },
+      convertir: (datos) => _desdeJson(datos['item']),
+    );
+  }
+
+  @override
+  Future<Donante> actualizar(String id, DatosDonante datos) async {
+    final idLimpio = id.trim();
+    if (idLimpio.isEmpty) {
+      throw DonanteApiException(
+        400,
+        'El identificador del donante es obligatorio.',
+      );
+    }
+    final entrada = _validador.validarDatos(datos);
+    return _solicitar(
+      '/${Uri.encodeComponent(idLimpio)}',
+      metodo: 'PUT',
+      estadoEsperado: 200,
       cuerpo: {
         'rut': entrada.rut,
         'nombre': entrada.nombre,

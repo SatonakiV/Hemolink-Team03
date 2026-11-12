@@ -3,10 +3,14 @@ import { randomUUID } from 'node:crypto';
 import { JsonStore } from './json-store.mjs';
 import { fechaValida, fechaLocal } from './dates.mjs';
 import { DonanteError, normalizarRut, rutValido, validarDonante } from './donors.mjs';
+import { DonacionError, validarDonacion, registrarDonacion, detalleDonacion } from './donations.mjs';
+import { donacionDeSede, registrarMuestra } from './samples.mjs';
 import {
   matchesPassword, passwordHash, tokenHash, newToken,
   publicUser, isAuthorizedUser, roleModules, seedDemoData,
 } from './auth.mjs';
+
+const ID_VALIDO = /^[A-Za-z0-9_-]{1,64}$/;
 
 class ApiError extends Error {
   constructor(status, message) {
@@ -126,7 +130,7 @@ export function createApplication({
       if (origin) response.setHeader('Access-Control-Allow-Origin', origin);
 
       if (request.method === 'OPTIONS') {
-        response.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+        response.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, OPTIONS');
         response.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
         response.writeHead(204);
         response.end();
@@ -259,6 +263,51 @@ export function createApplication({
           send(200, { items });
           return;
         }
+
+        // T04.4: corrección de antecedentes del donante.
+        if (request.method === 'PUT' && path.startsWith('/api/donors/')) {
+          const id = path.slice('/api/donors/'.length);
+          if (!/^[A-Za-z0-9_-]{1,64}$/.test(id)) {
+            throw new ApiError(404, 'Donante no encontrado.');
+          }
+          const datos = validarDonante(await readBody(request), fechaLocal(clock));
+          let itemActualizado;
+          store.update(db => {
+            const index = db.records.findIndex(record =>
+              record.module === 'donors' && record.scopeId === user.siteId && record.id === id,
+            );
+            if (index === -1) {
+              throw new ApiError(404, 'Donante no encontrado.');
+            }
+            // UT04.4-B: unicidad excluyendo al propio registro.
+            if (db.records.some(record =>
+              record.module === 'donors' &&
+              record.id !== id &&
+              normalizarRut(record.rut) === datos.rut,
+            )) {
+              throw new DonanteError(409, 'Ya existe un donante con ese RUT.', {
+                rut: 'Ya existe un donante con ese RUT.',
+              });
+            }
+            const actual = db.records[index];
+            itemActualizado = {
+              ...actual,
+              ...datos,
+              id: actual.id,
+              module: 'donors',
+              scopeId: actual.scopeId,
+              label: datos.nombre,
+              usuarioRegistroId: actual.usuarioRegistroId,
+              fechaRegistro: actual.fechaRegistro,
+              usuarioModificacionId: user.id,
+              fechaModificacion: new Date(clock()).toISOString(),
+            };
+            db.records[index] = itemActualizado;
+          });
+          send(200, { item: itemActualizado });
+          return;
+        }
+
         throw new ApiError(405, 'Operación no implementada.');
       }
 
@@ -352,6 +401,74 @@ export function createApplication({
         throw new ApiError(405, 'Operación no implementada.');
       }
 
+      // PR17: muestras persistidas, separadas de las unidades de inventario.
+      if (path === '/api/samples' || path.startsWith('/api/samples/')) {
+        const { user } = authenticate(request);
+        if (user.role !== 'nursing') {
+          throw new ApiError(403, 'Tu perfil no puede gestionar muestras.');
+        }
+        if (path === '/api/samples' && request.method === 'POST') {
+          const datos = await readBody(request);
+          let item;
+          store.update(db => { item = registrarMuestra(db, datos, user, clock); });
+          send(201, { item });
+          return;
+        }
+        if (request.method === 'GET') {
+          const db = store.read();
+          let items = db.records.filter(item => item.module === 'samples' && item.scopeId === user.siteId);
+          if (path !== '/api/samples') {
+            const item = items.find(item => item.id === path.slice('/api/samples/'.length));
+            if (!item) throw new ApiError(404, 'Muestra no encontrada.');
+            send(200, { item });
+            return;
+          }
+          const donacionId = url.searchParams.get('donacionId');
+          if (donacionId !== null) {
+            donacionDeSede(db, donacionId, user.siteId);
+            items = items.filter(item => item.donacionId === donacionId);
+          }
+          send(200, { items });
+          return;
+        }
+        throw new ApiError(405, 'Operación no implementada.');
+      }
+
+      // T03.1: donaciones y unidades, solo para enfermería. La sede y el responsable
+      // salen de la sesión; el vencimiento lo calcula el servidor.
+      if (path === '/api/donations' || path.startsWith('/api/donations/')) {
+        const { user } = authenticate(request);
+        if (!roleModules[user.role]?.includes('donations')) {
+          throw new ApiError(403, 'Tu perfil no puede gestionar donaciones.');
+        }
+
+        if (path === '/api/donations' && request.method === 'POST') {
+          const datos = validarDonacion(await readBody(request), fechaLocal(clock));
+          const id = randomUUID();
+          store.update(db => registrarDonacion(db, user, datos, {
+            id, nuevoIdUnidad: randomUUID, ahora: new Date(clock()).toISOString(),
+          }));
+          send(201, { item: detalleDonacion(store.read(), user, id) });
+          return;
+        }
+
+        if (request.method === 'GET') {
+          const db = store.read();
+          if (path === '/api/donations') {
+            const items = db.records.filter(r =>
+              r.module === 'donations' && r.scopeId === user.siteId).reverse();
+            send(200, { items });
+            return;
+          }
+          const id = path.slice('/api/donations/'.length);
+          const item = ID_VALIDO.test(id) ? detalleDonacion(db, user, id) : null;
+          if (!item) throw new ApiError(404, 'Donación no encontrada.');
+          send(200, { item });
+          return;
+        }
+        throw new ApiError(405, 'Operación no implementada.');
+      }
+
       // Se conservan los módulos de consulta existentes.
       const module = path.startsWith('/api/') ? path.slice(5) : '';
 
@@ -386,7 +503,8 @@ export function createApplication({
         message: error.status
           ? error.message
           : 'No se pudo completar la operación.',
-        ...(error instanceof DonanteError ? { errors: error.errors } : {}),
+        ...(error instanceof DonanteError || error instanceof DonacionError
+          ? { errors: error.errors } : {}),
       });
     }
   });

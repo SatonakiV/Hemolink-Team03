@@ -9,4 +9,8 @@ abstract interface class DonanteRepository {
 
   /// null significa inexistente; un fallo de consulta se propaga como excepción.
   Future<Donante?> buscarPorId(String id);
+
+  /// Actualiza antecedentes manteniendo identificador y metadatos originales;
+  /// registra usuario y fecha de modificación.
+  Future<Donante> actualizar(String id, DatosDonante datos);
 }

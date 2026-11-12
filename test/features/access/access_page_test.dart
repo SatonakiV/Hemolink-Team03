@@ -8,6 +8,7 @@ import 'package:http/testing.dart';
 
 import '../../core/access/auth_session_test.dart'
     show MemoryTokenStore, jsonResponse, nursingUser;
+import '../donantes/donantes_page_test.dart' show RepoConsulta;
 
 AuthSession sessionFor({String role = 'nursing', bool rejected = false}) =>
     AuthSession(
@@ -113,7 +114,12 @@ void main() {
 
   for (final role in ['nursing', 'inventory', 'hospital']) {
     testWidgets('UT01.1-D: $role solo navega por sus módulos', (tester) async {
-      await tester.pumpWidget(MainApp(session: sessionFor(role: role)));
+      await tester.pumpWidget(
+        MainApp(
+          session: sessionFor(role: role),
+          donantes: RepoConsulta(),
+        ),
+      );
       await tester.pumpAndSettle();
       await enter(tester);
       final module = switch (role) {
@@ -139,7 +145,18 @@ void main() {
       );
       await tester.tap(find.widgetWithText(OutlinedButton, module));
       await tester.pumpAndSettle();
-      expect(find.text('Registro persistente de prueba'), findsOneWidget);
+      if (role == 'nursing') {
+        expect(find.text('María Soto'), findsOneWidget);
+        await tester.tap(find.text('María Soto'));
+        await tester.pumpAndSettle();
+        expect(find.text('Ficha del donante'), findsOneWidget);
+        await tester.pageBack();
+        await tester.pumpAndSettle();
+        await tester.pageBack();
+        await tester.pumpAndSettle();
+      } else {
+        expect(find.text('Registro persistente de prueba'), findsOneWidget);
+      }
       await tester.ensureVisible(find.text('Cerrar sesión'));
       await tester.tap(find.text('Cerrar sesión'));
       await tester.pumpAndSettle();

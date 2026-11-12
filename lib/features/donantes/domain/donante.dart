@@ -31,6 +31,8 @@ class Donante {
   final String telefono;
   final String usuarioRegistroId;
   final DateTime fechaRegistro;
+  final String? usuarioModificacionId;
+  final DateTime? fechaModificacion;
 
   const Donante({
     required this.id,
@@ -43,5 +45,7 @@ class Donante {
     required this.telefono,
     required this.usuarioRegistroId,
     required this.fechaRegistro,
+    this.usuarioModificacionId,
+    this.fechaModificacion,
   });
 }

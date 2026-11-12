@@ -148,4 +148,30 @@ void main() {
       expect(AccessPolicy.canManageDonors(user), isFalse);
     });
   });
+
+  group('Módulos de navegación - T03.1', () {
+    AppUser usuario(UserRole role) => AppUser(
+      id: 'usuario-prueba',
+      role: role,
+      isVerified: true,
+      siteId: role == UserRole.hospital ? null : 'sede-prueba',
+      hospitalId: role == UserRole.hospital ? 'hospital-01' : null,
+    );
+
+    test('solo enfermería verificada ve Donaciones', () {
+      expect(
+        AccessPolicy.modulesFor(usuario(UserRole.nursing)),
+        contains('donations'),
+      );
+      expect(
+        AccessPolicy.modulesFor(usuario(UserRole.inventory)),
+        isNot(contains('donations')),
+      );
+      expect(
+        AccessPolicy.modulesFor(usuario(UserRole.hospital)),
+        isNot(contains('donations')),
+      );
+      expect(AccessPolicy.modulesFor(null), isEmpty);
+    });
+  });
 }

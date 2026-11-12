@@ -56,7 +56,6 @@ Windows:
 
 Contraseña de las semillas: `DemoHemoLink2026!`. Puedes definir
 `HEMOLINK_DEMO_PASSWORD` antes de crearlas; no cambia contraseñas ya guardadas.
-Son cuentas de prueba para el sprint.
 
 La sesión se recupera al recargar consultando `/api/me`. Al salir se invalida
 en el servidor. Cada sesión vence a las 8 horas. El cliente conserva únicamente
@@ -74,10 +73,6 @@ el token mediante `flutter_secure_storage`; el perfil lo obtiene del servidor.
 Usa una sola instancia del servidor por archivo JSON. Las escrituras se realizan
 mediante un archivo temporal y reemplazo atómico. Para respaldar o editar el JSON,
 detén la API primero. No publiques `server/data/` dentro de los archivos web.
-
-Esta base cubre el acceso de T01.1. Los módulos muestran registros ficticios
-recuperados del servidor según sede u hospital; los formularios, validaciones y
-operaciones completas de cada HU corresponden a sus tareas siguientes.
 
 ### Comprobaciones
 
