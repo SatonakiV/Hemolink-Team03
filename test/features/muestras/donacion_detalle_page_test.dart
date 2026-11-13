@@ -122,4 +122,26 @@ void main() {
     expect(find.text('Unidad: U-001'), findsOneWidget);
     expect(find.text('Muestra: M-001'), findsOneWidget);
   });
+
+  testWidgets('UT04.2-B: Código vacío impide enviar', (tester) async {
+    final repo = MockMuestraRepository();
+    await tester.pumpWidget(
+      crearWidgetPrueba(
+        donacion: donacionBase,
+        muestraRepository: repo,
+        muestrasIniciales: [],
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // Intentar registrar con campo de texto vacío
+    await tester.tap(find.byKey(const Key('registrar-muestra-btn')));
+    await tester.pumpAndSettle();
+
+    // Verificar que no se llamó a guardar en el repositorio
+    expect(repo.ultimoDatosGuardados, isNull);
+
+    // Señalar el error por dato inválido
+    expect(find.text('Ingresa un código de muestra.'), findsOneWidget);
+  });
 }
