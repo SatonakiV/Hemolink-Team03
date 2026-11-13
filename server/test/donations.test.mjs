@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { createApplication } from '../src/app.mjs';
 import { JsonStore } from '../src/json-store.mjs';
 
@@ -56,7 +57,7 @@ async function entorno(prueba) {
     });
     assert.equal(evaluacion.estado, 201);
     const donar = (cambios = {}) => api('/api/donations', {
-      metodo: 'POST', cuerpo: { ...DONACION, donanteId: donante.id, ...cambios },
+      metodo: 'POST', cuerpo: {claveConfirmacion: randomUUID(), ...DONACION, donanteId: donante.id, ...cambios },
     });
     const registros = () => store.read().records.length;
     await prueba({ api, donar, donante, store, archivo, entrar, solicitar, registros, sesion });
@@ -209,7 +210,7 @@ test('CP03-03/05: extracción futura, volumen inválido y aptitud inválida se r
 test('CP03-11: sin sesión o con rol ajeno el servidor rechaza sin crear registros', async () => {
   await entorno(async ({ entrar, solicitar, donante, registros }) => {
     const antes = registros();
-    const cuerpo = { ...DONACION, donanteId: donante.id };
+    const cuerpo = { ...DONACION, donanteId: donante.id, claveConfirmacion: randomUUID()};
     const sinSesion = await solicitar('/api/donations', { metodo: 'POST', cuerpo });
     assert.equal(sinSesion.estado, 401);
     for (const email of ['inventario@hemolink.test', 'hospital@hemolink.test']) {
@@ -219,6 +220,125 @@ test('CP03-11: sin sesión o con rol ajeno el servidor rechaza sin crear registr
       assert.equal(escritura.estado, 403, email);
       assert.equal(lectura.estado, 403, email);
       assert.equal(JSON.stringify(lectura.datos).includes('Donante Prueba'), false);
+    }
+    assert.equal(registros(), antes);
+    });
+  });
+// T03.2: validar y guardar en conjunto
+
+test('UT03.2-A: extracción del 02-11-2026 vence el 14-12-2026', async () => {
+  const { sumarDias } = await import('../src/dates.mjs');
+  assert.equal(sumarDias('2026-11-02', 42), '2026-12-14');
+  assert.equal(sumarDias('2026-12-25', 42), '2027-02-05');
+  assert.equal(sumarDias('2028-01-20', 42), '2028-03-02'); // año bisiesto
+  await entorno(async ({ donar }) => {
+    const { estado, datos } = await donar({ fechaExtraccion: '2026-11-02' });
+    assert.equal(estado, 201, JSON.stringify(datos));
+    assert.equal(datos.item.unidades[0].fechaVencimiento, '2026-12-14');
+  });
+});
+
+test('UT03.2-B: fecha futura, volumen no positivo, cero unidades o aptitud inválida se rechazan', async () => {
+  await entorno(async ({ api, donar, donante, registros }) => {
+    const antes = registros();
+    const casos = [
+      ['extracción futura', { fechaExtraccion: '2026-11-09' }, 400, 'fechaExtraccion'],
+      ['volumen cero', { volumenMl: 0 }, 400, 'volumenMl'],
+      ['volumen negativo', { volumenMl: -1 }, 400, 'volumenMl'],
+      ['cero unidades', { unidades: [] }, 400, 'unidades'],
+      ['sin evaluación', { evaluacionId: undefined }, 400, 'evaluacionId'],
+      ['antes de la evaluación', { fechaExtraccion: '2026-11-01' }, 409, null],
+    ];
+    for (const [nombre, cambios, estado, campo] of casos) {
+      const r = await donar(cambios);
+      assert.equal(r.estado, estado, `${nombre}: ${JSON.stringify(r.datos)}`);
+      if (campo) assert.ok(r.datos.errors?.[campo], `${nombre}: debe identificar ${campo}`);
+    }
+    // Rechazado como evaluación vigente: la regla de HU02 impide confirmar.
+    await api('/api/evaluations', { metodo: 'POST', cuerpo: {
+      id: 'EV_R', donanteId: donante.id, resultado: 'rechazado', fechaEvaluacion: '2026-11-04',
+    } });
+    assert.equal((await donar({ evaluacionId: 'EV_R', fechaExtraccion: '2026-11-05' })).estado, 409);
+    assert.equal(registros() - antes, 1, 'solo la evaluación rechazada; ninguna donación');
+  });
+});
+
+test('UT03.2-C: sede manipulada o grupo contradictorio no se guardan e informan el conflicto', async () => {
+  await entorno(async ({ donar, registros }) => {
+    const antes = registros();
+    const sede = await donar({ sedeId: 'sede-b' });
+    assert.equal(sede.estado, 409);
+    assert.match(sede.datos.message, /sede/i);
+    const grupo = await donar({ unidades: [{ codigo: 'U-020', grupoAbo: 'A', factorRh: 'negativo' }] });
+    assert.equal(grupo.estado, 409);
+    assert.match(grupo.datos.message, /grupo/i);
+    assert.equal(registros(), antes);
+  });
+});
+
+test('UT03.2-D: fallo al guardar revierte donación y unidades; la misma clave puede reintentarse', async () => {
+  await entorno(async ({ donar, store, archivo, registros }) => {
+    const antes = registros();
+    const clave = randomUUID();
+    const unidades = [{ codigo: 'U-030' }, { codigo: 'U-031' }];
+    const rutaReal = store.path;
+    store.path = join(archivo, 'destino-invalido.json'); // provoca fallo de escritura
+    const fallida = await donar({ claveConfirmacion: clave, unidades });
+    store.path = rutaReal;
+
+    assert.equal(fallida.estado, 500);
+    assert.equal(JSON.stringify(fallida.datos).includes('destino-invalido'), false, 'no expone rutas');
+    assert.equal(registros(), antes, 'ni donación ni unidades en memoria');
+    const enDisco = new JsonStore(archivo).read().records;
+    assert.equal(enDisco.some(r => r.codigo === 'U-030' || r.module === 'donations'), false);
+
+    const reintento = await donar({ claveConfirmacion: clave, unidades });
+    assert.equal(reintento.estado, 201, 'la clave no quedó consumida por el fallo');
+    assert.equal(reintento.datos.item.unidades.length, 2);
+  });
+});
+
+test('UT03.2-E: repetir la misma confirmación devuelve el resultado existente sin duplicar', async () => {
+  await entorno(async ({ donar, registros }) => {
+    const clave = randomUUID();
+    const primera = await donar({ claveConfirmacion: clave });
+    assert.equal(primera.estado, 201);
+    const despues = registros();
+
+    const repetida = await donar({ claveConfirmacion: clave });
+    assert.equal(repetida.estado, 200);
+    assert.equal(repetida.datos.item.id, primera.datos.item.id);
+    assert.deepEqual(repetida.datos.item.unidades.map(u => u.id),
+      primera.datos.item.unidades.map(u => u.id));
+    assert.equal(registros(), despues, 'no se creó otra extracción ni unidades');
+
+    // Misma clave con otros datos: conflicto, sin cambios.
+    const alterada = await donar({ claveConfirmacion: clave, volumenMl: 300 });
+    assert.equal(alterada.estado, 409);
+    assert.equal(registros(), despues);
+  });
+});
+
+test('UT03.2-E/CP03-09: confirmaciones concurrentes con la misma clave dejan una sola donación', async () => {
+  await entorno(async ({ donar, store }) => {
+    const clave = randomUUID();
+    const respuestas = await Promise.all(
+      Array.from({ length: 5 }, () => donar({ claveConfirmacion: clave, unidades: [{ codigo: 'U-040' }] })));
+    assert.deepEqual(respuestas.map(r => r.estado).sort(), [200, 200, 200, 200, 201]);
+    assert.equal(new Set(respuestas.map(r => r.datos.item.id)).size, 1);
+    const db = store.read();
+    assert.equal(db.records.filter(r => r.module === 'donations').length, 1);
+    assert.equal(db.records.filter(r => r.codigo === 'U-040').length, 1);
+  });
+});
+
+test('T03.2: sin clave de confirmación no se registra', async () => {
+  await entorno(async ({ donar, registros }) => {
+    const antes = registros();
+    for (const clave of [undefined, '', 'corta', 'con espacios no válida']) {
+      const r = await donar({ claveConfirmacion: clave });
+      assert.equal(r.estado, 400, String(clave));
+      assert.ok(r.datos.errors?.claveConfirmacion);
     }
     assert.equal(registros(), antes);
   });

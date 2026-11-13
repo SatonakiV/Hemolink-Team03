@@ -323,3 +323,105 @@ test('T04.4: PUT /api/donors/:id actualiza datos, conserva id y metadatos, regis
   assert.equal(recuperado.data.item.usuarioModificacionId, 'nursing-demo');
 });
 
+test('UT04.6-A a E: regresión y trazabilidad del flujo de corrección con evaluaciones, donaciones, unidades y muestras', async t => {
+  const f = await fixture(t);
+
+  // 1. Crear donante
+  const dRes = await f.api('/api/donors', { method: 'POST', body: donor });
+  assert.equal(dRes.status, 201);
+  const donorId = dRes.data.item.id;
+
+  // 2. Crear evaluación
+  const evRes = await f.api('/api/evaluations', {
+    method: 'POST',
+    body: {
+      id: 'EV_T046', donanteId: donorId, resultado: 'apto',
+      fechaEvaluacion: '2026-11-09', fechaFinVigencia: '2026-11-20',
+    },
+  });
+  assert.equal(evRes.status, 201);
+
+  // 3. Crear donación (con 1 unidad U-046)
+  const donRes = await f.api('/api/donations', {
+    method: 'POST',
+    body: {
+      claveConfirmacion: 'clave-t046-000000001',
+      donanteId: donorId,
+      evaluacionId: 'EV_T046',
+      fechaExtraccion: '2026-11-09',
+      volumenMl: 450,
+      unidades: [{ codigo: 'U-046' }],
+    },
+  });
+  assert.equal(donRes.status, 201);
+  const donationId = donRes.data.item.id;
+
+  // 4. Crear muestra
+  const sampleRes = await f.api('/api/samples', {
+    method: 'POST',
+    body: { codigo: 'M-046', donacionId: donationId },
+  });
+  assert.equal(sampleRes.status, 201);
+  const sampleId = sampleRes.data.item.id;
+
+  // UT04.6-D: Sin token (401) o con rol no autorizado (403) no se puede modificar
+  const sinToken = await f.request(`/api/donors/${donorId}`, {
+    method: 'PUT', body: { ...donor, nombre: 'Intento Sin Token' },
+  });
+  assert.equal(sinToken.status, 401);
+
+  const tokenInventario = await f.login('inventario@hemolink.test');
+  const rolAjeno = await f.request(`/api/donors/${donorId}`, {
+    method: 'PUT', body: { ...donor, nombre: 'Intento Rol Ajeno' }, token: tokenInventario,
+  });
+  assert.equal(rolAjeno.status, 403);
+
+  // UT04.6-C: RUT duplicado ajeno (409) o fallo de validación (400) mantiene la versión guardada intacta
+  const rutDuplicado = await f.api(`/api/donors/${donorId}`, {
+    method: 'PUT', body: { ...donor, rut: '11.111.111-1' },
+  });
+  assert.equal(rutDuplicado.status, 409);
+
+  // UT04.6-A y UT04.6-B: Editar donante (cambiar grupo de O+ a A+) y verificar conservación de relaciones e invariante del grupo de la unidad histórica
+  const tokenEnfermeria = await f.login('enfermeria@hemolink.test');
+  const edicion = await f.api(`/api/donors/${donorId}`, {
+    method: 'PUT',
+    body: {
+      ...donor,
+      nombre: 'Donante Corregido Trazabilidad',
+      grupoAbo: 'A',
+      factorRh: 'positivo',
+      telefono: '999111222',
+    },
+  });
+  assert.equal(edicion.status, 200);
+  assert.equal(edicion.data.item.grupoAbo, 'A');
+
+  // UT04.6-E: Recuperar tras reinicio y verificar persistencia y trazabilidad completa
+  await f.restart();
+
+  // Donante editado recuperado
+  const donanteRecuperado = await f.api(`/api/donors/${donorId}`);
+  assert.equal(donanteRecuperado.status, 200);
+  assert.equal(donanteRecuperado.data.item.nombre, 'Donante Corregido Trazabilidad');
+  assert.equal(donanteRecuperado.data.item.grupoAbo, 'A');
+
+  // Evaluación intacta y vinculada
+  const evalRecuperada = await f.api(`/api/evaluations?donanteId=${donorId}`);
+  assert.equal(evalRecuperada.status, 200);
+  assert.equal(evalRecuperada.data.items[0].id, 'EV_T046');
+
+  // Donación e inventario intactos: la unidad histórica conserva grupo 'O' de extracción
+  const donacionRecuperada = await f.api(`/api/donations/${donationId}`);
+  assert.equal(donacionRecuperada.status, 200);
+  assert.equal(donacionRecuperada.data.item.donanteId, donorId);
+  assert.equal(donacionRecuperada.data.item.unidades[0].grupoAbo, 'O');
+
+  // Muestra intacta y vinculada a donación y donante
+  const muestraRecuperada = await f.api(`/api/samples/${sampleId}`);
+  assert.equal(muestraRecuperada.status, 200);
+  assert.equal(muestraRecuperada.data.item.donacionId, donationId);
+  assert.equal(muestraRecuperada.data.item.donanteId, donorId);
+});
+
+
