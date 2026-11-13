@@ -10,7 +10,6 @@ import 'package:hemolink/features/donaciones/data/api_donacion_repository.dart';
 import 'package:hemolink/features/donaciones/domain/donacion.dart';
 import 'package:hemolink/features/donantes/data/api_donante_repository.dart';
 import 'package:hemolink/features/donantes/domain/donante.dart';
-import 'package:hemolink/features/donantes/domain/validador_donante.dart';
 import 'package:hemolink/features/muestras/data/api_muestra_repository.dart';
 import 'package:hemolink/features/muestras/data/muestra_repository.dart';
 import 'package:http/http.dart' as http;

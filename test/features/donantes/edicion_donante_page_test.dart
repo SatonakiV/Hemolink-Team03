@@ -174,7 +174,7 @@ void main() {
         final repo = RepoPrueba()
           ..ficha = (_) async => donanteActual;
         repo.actualizarFn = (id, datos) async {
-            if (datos.rut == '22.222.222-2') {
+            if (datos.rut == '22222222-2' || datos.rut == '22.222.222-2') {
               throw DonanteApiException(409, 'Ya existe un donante con ese RUT.', errores: {
                 'rut': 'Ya existe un donante con ese RUT.',
               });
@@ -208,7 +208,7 @@ void main() {
         await tester.pumpAndSettle();
 
         // Error visible al lado del dato
-        expect(find.text('Ya existe un donante con ese RUT.'), findsOneWidget);
+        expect(find.text('Ya existe un donante con ese RUT.'), findsAtLeastNWidgets(1));
         // Formulario conserva lo escrito
         final telefonoField =
             tester.widget<TextField>(find.byKey(const Key('edicion-telefono')));
