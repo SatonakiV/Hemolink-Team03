@@ -214,4 +214,39 @@ void main() {
     );
     expect(inputWidget.controller?.text, 'M-DUPLICADO');
   });
+
+  testWidgets('UT04.2-E: La donación del contexto no se sustituye por una entrada del usuario', (tester) async {
+    final repo = MockMuestraRepository();
+    final donacionEspecial = Donacion(
+      id: 'DON-INMUTABLE-999',
+      donanteId: 'D-999',
+      evaluacionId: 'EV-999',
+      fechaExtraccion: DateTime(2026, 11, 3),
+      volumenMl: 450,
+      sedeId: 'sede-central',
+      responsableId: 'nursing-demo',
+      fechaRegistro: DateTime(2026, 11, 3),
+      unidades: [],
+    );
+
+    await tester.pumpWidget(
+      crearWidgetPrueba(
+        donacion: donacionEspecial,
+        muestraRepository: repo,
+        muestrasIniciales: [],
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // Ingresar código de muestra
+    await tester.enterText(
+      find.byKey(const Key('codigo-muestra-input')),
+      'M-INMUTABLE',
+    );
+    await tester.tap(find.byKey(const Key('registrar-muestra-btn')));
+    await tester.pumpAndSettle();
+
+    // La donación enviada SIEMPRE es la de la pantalla del contexto ('DON-INMUTABLE-999')
+    expect(repo.ultimoDatosGuardados?.donacionId, 'DON-INMUTABLE-999');
+  });
 }
