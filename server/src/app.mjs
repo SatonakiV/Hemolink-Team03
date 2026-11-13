@@ -1,6 +1,6 @@
 import { createServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
-import { JsonStore } from './json-store.mjs';
+import { openStore } from './store.mjs';
 import { fechaValida, fechaLocal } from './dates.mjs';
 import { DonanteError, normalizarRut, rutValido, validarDonante } from './donors.mjs';
 import { DonacionError, validarDonacion, registrarDonacion, detalleDonacion, confirmacionPrevia} from './donations.mjs';
@@ -86,9 +86,10 @@ function validarEvaluacion(datos, clock) {
 export function createApplication({
   databasePath, seedDemo = false, demoPassword = 'DemoHemoLink2026!',
   clock = Date.now, maxLoginAttempts = 10,
+  checkpointOnClose = false, importJsonPath,
   allowedOrigins = ['http://localhost:5173', 'http://127.0.0.1:5173'],
 }) {
-  const store = new JsonStore(databasePath);
+  const store = openStore(databasePath, { importJsonPath });
   if (seedDemo) seedDemoData(store, demoPassword);
   const dummyHash = passwordHash('unused-random-' + newToken());
   const attempts = new Map();
@@ -98,7 +99,7 @@ export function createApplication({
       request.headers.authorization ?? '',
     )?.[1];
 
-    const db = store.read();
+    const db = store.read({ users: {}, sessions: { tokenHash: token ? tokenHash(token) : '' } });
     const session = token && db.sessions.find(
       item => item.tokenHash === tokenHash(token),
     );
@@ -163,7 +164,7 @@ export function createApplication({
           throw new ApiError(400, 'Ingresa correo y contraseña válidos.');
         }
 
-        const user = store.read().users.find(
+        const user = store.read({ users: { email: body.email.trim().toLowerCase() } }).users.find(
           item => item.email === body.email.trim().toLowerCase(),
         );
 
@@ -238,7 +239,10 @@ export function createApplication({
         }
 
         if (request.method === 'GET') {
-          let items = store.read().records.filter(record =>
+          let items = store.read({ records: {
+            module: 'donors', scopeId: user.siteId,
+            ...(path === '/api/donors' ? {} : { id: path.slice('/api/donors/'.length) }),
+          } }).records.filter(record =>
             record.module === 'donors' && record.scopeId === user.siteId,
           );
           if (path !== '/api/donors') {
@@ -357,7 +361,12 @@ export function createApplication({
         }
 
         if (request.method === 'GET') {
-          let items = store.read().records.filter(item =>
+          let items = store.read({ records: {
+            module: 'evaluations', scopeId: scope,
+            ...(path === '/api/evaluations' ? {} : { id: path.slice('/api/evaluations/'.length) }),
+            ...(url.searchParams.has('donanteId') && path === '/api/evaluations'
+              ? { donanteId: url.searchParams.get('donanteId') } : {}),
+          } }).records.filter(item =>
             item.module === 'evaluations' &&
             item.scopeId === scope,
           );
@@ -415,7 +424,11 @@ export function createApplication({
           return;
         }
         if (request.method === 'GET') {
-          const db = store.read();
+          const donationFilter = url.searchParams.get('donacionId');
+          const db = donationFilter !== null ? store.read() : store.read({ records: {
+            module: 'samples', scopeId: user.siteId,
+            ...(path === '/api/samples' ? {} : { id: path.slice('/api/samples/'.length) }),
+          } });
           let items = db.records.filter(item => item.module === 'samples' && item.scopeId === user.siteId);
           if (path !== '/api/samples') {
             const item = items.find(item => item.id === path.slice('/api/samples/'.length));
@@ -444,21 +457,28 @@ export function createApplication({
 
         if (path === '/api/donations' && request.method === 'POST') {
           const datos = validarDonacion(await readBody(request), fechaLocal(clock));
-          const previa= confirmacionPrevia(store.read(),user,datos);
-          if(previa){
-            send(200, { item: detalleDonacion(store.read(), user, previa.id) });
-            return;
-          }
-          const id = randomUUID();
-          store.update(db => registrarDonacion(db, user, datos, {
-            id, nuevoIdUnidad: randomUUID, ahora: new Date(clock()).toISOString(),
-          }));
-          send(201, { item: detalleDonacion(store.read(), user, id) });
+          let item;
+          let created = false;
+          store.update(db => {
+            // La idempotencia y el resultado pertenecen a la misma transacción,
+            // incluso cuando dos procesos comparten la base JSON.
+            const previa = confirmacionPrevia(db, user, datos);
+            const id = previa?.id ?? randomUUID();
+            if (!previa) {
+              registrarDonacion(db, user, datos, {
+                id, nuevoIdUnidad: randomUUID, ahora: new Date(clock()).toISOString(),
+              });
+              created = true;
+            }
+            item = detalleDonacion(db, user, id);
+          });
+          send(created ? 201 : 200, { item });
           return;
         }
 
         if (request.method === 'GET') {
-          const db = store.read();
+          const db = path === '/api/donations'
+            ? store.read({ records: { module: 'donations', scopeId: user.siteId } }) : store.read();
           if (path === '/api/donations') {
             const items = db.records.filter(r =>
               r.module === 'donations' && r.scopeId === user.siteId).reverse();
@@ -492,7 +512,7 @@ export function createApplication({
           ? user.hospitalId
           : user.siteId;
 
-        const items = store.read().records.filter(item =>
+        const items = store.read({ records: { module, scopeId: scope } }).records.filter(item =>
           item.module === module &&
           item.scopeId === scope,
         );
@@ -514,5 +534,11 @@ export function createApplication({
     }
   });
 
+  // El ejecutable compacta al apagar; los consumidores de la aplicación pueden
+  // conservar el diario, pues cada COMMIT ya fue sincronizado.
+  server.once('close', () => {
+    try { store.close({ checkpoint: checkpointOnClose }); }
+    catch { console.error('No se pudo compactar la base JSON; conserve la instantánea y su diario.'); }
+  });
   return { server, store };
 }
