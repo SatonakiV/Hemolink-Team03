@@ -6,4 +6,7 @@ abstract interface class DonacionRepository {
 
   // Un fallo de consulta se propaga como excepción.
   Future<Donacion?> buscarPorId(String id);
+
+  // Donaciones de la sede de la sesión, de la más reciente a la más antigua.
+  Future<List<ResumenDonacion>> listar();
 }

@@ -100,6 +100,8 @@ class _DonacionDetallePageState extends State<DonacionDetallePage> {
                 _buildSeccionUnidades(context),
                 const SizedBox(height: 24),
                 _buildSeccionMuestras(context),
+                const SizedBox(height: 24),
+                _buildVinculos(context),
               ],
             ),
           ),
@@ -130,6 +132,32 @@ class _DonacionDetallePageState extends State<DonacionDetallePage> {
     );
   }
 
+  // Vínculos de origen de la donación. 
+  //Va al final para no mover las secciones de unidades y muestras.
+  Widget _buildVinculos(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Vínculos de origen',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 8),
+            Text('Evaluación utilizada: ${widget.donacion.evaluacionId}'),
+            Text('Sede: ${widget.donacion.sedeId}'),
+            Text('Responsable: ${widget.donacion.responsableId}'),
+            Text(
+              'Registrada: ${_fecha(widget.donacion.fechaRegistro.toLocal())}',
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildSeccionUnidades(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -147,7 +175,8 @@ class _DonacionDetallePageState extends State<DonacionDetallePage> {
               margin: const EdgeInsets.only(bottom: 8),
               child: ListTile(
                 title: Text('Unidad: ${unidad.codigo}'),
-                subtitle: Text('Grupo: ${unidad.grupo} | Donación: ${unidad.donacionId}'),
+                subtitle: Text('Grupo: ${unidad.grupo} |' 'Donación: ${unidad.donacionId}',),
+                trailing: Text('Vence: ${_fecha(unidad.fechaVencimiento)}'),
               ),
             ),
       ],

@@ -79,3 +79,16 @@ class DatosDonacion {
     required List<String> codigosUnidades,
   }) : codigosUnidades = List.unmodifiable(codigosUnidades);
 }
+
+class ResumenDonacion {
+  final String id;
+  final DateTime fechaExtraccion;
+  final int volumenMl;
+  final String donanteId;
+  const ResumenDonacion({
+    required this.id,
+    required this.fechaExtraccion,
+    required this.volumenMl,
+    required this.donanteId,
+  });  
+}

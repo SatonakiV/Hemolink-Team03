@@ -56,6 +56,9 @@ class RepositorioFalso implements DonacionRepository {
 
   @override
   Future<Donacion?> buscarPorId(String id) async => null;
+
+  @override
+  Future<List<ResumenDonacion>> listar() async => const[];
 }
 
 void main() {
