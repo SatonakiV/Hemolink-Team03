@@ -144,4 +144,40 @@ void main() {
     // Señalar el error por dato inválido
     expect(find.text('Ingresa un código de muestra.'), findsOneWidget);
   });
+
+  testWidgets('UT04.2-C: Guardado correcto incorpora la muestra y muestra confirmación', (tester) async {
+    final repo = MockMuestraRepository();
+    await tester.pumpWidget(
+      crearWidgetPrueba(
+        donacion: donacionBase,
+        muestraRepository: repo,
+        muestrasIniciales: [],
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // Ingresar código válido
+    await tester.enterText(
+      find.byKey(const Key('codigo-muestra-input')),
+      'M-100',
+    );
+    await tester.tap(find.byKey(const Key('registrar-muestra-btn')));
+    await tester.pumpAndSettle();
+
+    // Verificar llamada al repositorio
+    expect(repo.ultimoDatosGuardados?.codigo, 'M-100');
+    expect(repo.ultimoDatosGuardados?.donacionId, 'DON-001');
+
+    // Muestra confirmación únicamente cuando el guardado termina correctamente
+    expect(find.text('Muestra registrada correctamente.'), findsOneWidget);
+
+    // Incorpora la muestra a la lista visual
+    expect(find.text('Muestra: M-100'), findsOneWidget);
+
+    // Limpia el formulario tras éxito
+    final inputWidget = tester.widget<TextField>(
+      find.byKey(const Key('codigo-muestra-input')),
+    );
+    expect(inputWidget.controller?.text, isEmpty);
+  });
 }
