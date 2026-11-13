@@ -53,6 +53,16 @@ class ApiDonacionRepository implements DonacionRepository {
     );
   }
 
+    static ResumenDonacion _resumenDesdeJson(Object? valor) {
+    final datos = valor as Map<String, dynamic>;
+    return ResumenDonacion(
+      id: datos['id'] as String,
+      donanteId: datos['donanteId'] as String,
+      fechaExtraccion: DateTime.parse(datos['fechaExtraccion'] as String),
+      volumenMl: datos['volumenMl'] as int,
+    );
+  }
+
   static Donacion _desdeJson(Object? valor) {
     final datos = valor as Map<String, dynamic>;
     return Donacion(
@@ -169,4 +179,9 @@ class ApiDonacionRepository implements DonacionRepository {
     '/${Uri.encodeComponent(id)}',
     siAusente: () => null,
     convertir: (datos) => _desdeJson(datos['item']),);
+
+  @override
+  Future<List<ResumenDonacion>> listar() => _solicitar(
+    '',convertir: (datos) => [for (final item in datos['items'] as List) _resumenDesdeJson(item),],
+  );
 }

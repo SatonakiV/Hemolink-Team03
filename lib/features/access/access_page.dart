@@ -1,12 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
-
 import '../../core/access/access_policy.dart';
 import '../../core/access/app_user.dart';
 import '../../core/access/auth_session.dart';
 import '../donantes/data/crear_repositorio_donantes.dart';
 import '../donantes/data/donante_repository.dart';
 import '../donantes/presentation/donantes_page.dart';
+import '../donaciones/presentation/donaciones_page.dart';
 
 const moduleNames = {
   'donors': 'Donantes',
@@ -278,6 +278,13 @@ class _AccessPageState extends State<AccessPage> {
                                             ),
                                           ),
                                         )
+                                      : module == 'donations' ? () => Navigator.of(context).push(
+                                          MaterialPageRoute<void>(
+                                            builder: (_) => DonacionesPage(
+                                              sesion: _session,
+                                              ),
+                                            ),
+                                          )
                                       : () => _perform(() async {
                                           _module = module;
                                           _items = null;

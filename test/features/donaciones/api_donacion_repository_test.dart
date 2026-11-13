@@ -149,4 +149,25 @@ void main() {
     expect(repetida.id, primera.id);
     expect(llamadas, 2);
   });
+  test('T03.3: listar convierte el listado de la sede', () async {
+    final cliente = MockClient((solicitud) async {
+      expect(solicitud.method, 'GET');
+      expect(solicitud.url.path, '/api/donations');
+      return _json({
+        'items': [
+          {
+            'id': 'DON-1',
+            'donanteId': 'D-1',
+            'fechaExtraccion': '2026-11-03',
+            'volumenMl': 450,
+            'label': 'Donación 2026-11-03 · 1 unidad(es)',
+          },
+        ],
+      }, 200);
+    });
+    final lista = await crear(cliente).listar();
+    expect(lista.single.id, 'DON-1');
+    expect(lista.single.fechaExtraccion, DateTime(2026, 11, 3));
+    expect(lista.single.volumenMl, 450);
+  });
 }
