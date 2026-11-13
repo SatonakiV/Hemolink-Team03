@@ -180,4 +180,38 @@ void main() {
     );
     expect(inputWidget.controller?.text, isEmpty);
   });
+
+  testWidgets('UT04.2-D: Duplicado o fallo muestra error y conserva el dato ingresado', (tester) async {
+    final repo = MockMuestraRepository();
+    repo.errorAlGuardar = MuestraApiException(
+      409,
+      'Ya existe una muestra con ese código.',
+    );
+
+    await tester.pumpWidget(
+      crearWidgetPrueba(
+        donacion: donacionBase,
+        muestraRepository: repo,
+        muestrasIniciales: [],
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // Ingresar código duplicado o problemático
+    await tester.enterText(
+      find.byKey(const Key('codigo-muestra-input')),
+      'M-DUPLICADO',
+    );
+    await tester.tap(find.byKey(const Key('registrar-muestra-btn')));
+    await tester.pumpAndSettle();
+
+    // Muestra mensaje de error
+    expect(find.text('Ya existe una muestra con ese código.'), findsOneWidget);
+
+    // Conserva el dato ingresado en el campo de texto
+    final inputWidget = tester.widget<TextField>(
+      find.byKey(const Key('codigo-muestra-input')),
+    );
+    expect(inputWidget.controller?.text, 'M-DUPLICADO');
+  });
 }
