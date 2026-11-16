@@ -2,9 +2,17 @@
   "name": "hemolink-local-api",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=22" },
+  "engines": { "node": ">=22.13.0" },
   "scripts": {
     "start": "node src/server.mjs",
-    "test": "node --test"
+    "test": "node --test",
+    "db:verify": "node src/database-tool.mjs verify",
+    "db:audit": "node src/database-tool.mjs audit",
+    "db:checkpoint": "node src/database-tool.mjs checkpoint",
+    "db:backup": "node src/database-tool.mjs backup",
+    "db:import-json": "node src/database-tool.mjs import-json",
+    "db:export-json": "node src/database-tool.mjs export-json",
+    "bench": "node bench/json-store.bench.mjs",
+    "bench:sqlite": "node bench/sqlite-store.bench.mjs"
   }
 }

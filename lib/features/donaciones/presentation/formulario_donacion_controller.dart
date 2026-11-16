@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+
 import '../../../core/access/app_user.dart';
 import '../../aptitud/data/api_evaluacion_repository.dart';
 import '../../aptitud/data/evaluacion_repository.dart';
@@ -47,6 +48,8 @@ class FormularioDonacionController extends ChangeNotifier {
   String? _errorGeneral;
   bool _cargandoDonantes = false;
   bool _cargandoEvaluacion = false;
+  int _consultaEvaluacion = 0;
+  DatosDonacion? _confirmacionPendiente;
   bool _guardando = false;
   bool _cerrado = false;
 
@@ -66,6 +69,8 @@ class FormularioDonacionController extends ChangeNotifier {
   bool get cargandoDonantes => _cargandoDonantes;
   bool get cargandoEvaluacion => _cargandoEvaluacion;
   bool get guardando => _guardando;
+  bool get confirmacionPendiente => _confirmacionPendiente != null;
+  bool get edicionBloqueada => _guardando || confirmacionPendiente;
 
   bool get autorizado =>
       usuario != null &&
@@ -93,7 +98,10 @@ class FormularioDonacionController extends ChangeNotifier {
     try {
       _listaDonantes = List.unmodifiable(await donantes.buscar());
     } catch (error) {
-      _errorGeneral = _mensaje(error, 'No se pudo cargar la lista de donantes.');
+      _errorGeneral = _mensaje(
+        error,
+        'No se pudo cargar la lista de donantes.',
+      );
     } finally {
       _cargandoDonantes = false;
       _avisar();
@@ -101,37 +109,44 @@ class FormularioDonacionController extends ChangeNotifier {
   }
 
   Future<void> seleccionarDonante(String? id) async {
+    if (edicionBloqueada || _cerrado) return;
+    final consulta = ++_consultaEvaluacion;
     _donante = null;
     for (final candidato in _listaDonantes) {
       if (candidato.id == id) _donante = candidato;
     }
     _evaluacion = null;
+    _errorGeneral = null;
     _errores = Map.of(_errores)
       ..remove('donanteId')
       ..remove('evaluacionId');
     final pedido = _donante?.id;
+    _cargandoEvaluacion = pedido != null;
     if (pedido == null) {
       _avisar();
       return;
     }
-    _cargandoEvaluacion = true;
     _avisar();
     try {
       final actual = await evaluaciones.buscarActual(pedido);
-      // Si cambió la selección mientras se consultaba, se descarta la respuesta.
-      if (_donante?.id == pedido) _evaluacion = actual;
+      if (!_cerrado && consulta == _consultaEvaluacion) _evaluacion = actual;
     } catch (error) {
-      _errorGeneral = _mensaje(
-        error,
-        'No se pudo consultar la aptitud del donante.',
-      );
+      if (!_cerrado && consulta == _consultaEvaluacion) {
+        _errorGeneral = _mensaje(
+          error,
+          'No se pudo consultar la aptitud del donante.',
+        );
+      }
     } finally {
-      _cargandoEvaluacion = false;
-      _avisar();
+      if (!_cerrado && consulta == _consultaEvaluacion) {
+        _cargandoEvaluacion = false;
+        _avisar();
+      }
     }
   }
 
   void cambiarFecha(DateTime fecha) {
+    if (edicionBloqueada || _cerrado) return;
     _fechaExtraccion = DateTime(fecha.year, fecha.month, fecha.day);
     _errores = Map.of(_errores)
       ..remove('fechaExtraccion')
@@ -140,6 +155,7 @@ class FormularioDonacionController extends ChangeNotifier {
   }
 
   void cambiarVolumen(String texto) {
+    if (edicionBloqueada || _cerrado) return;
     _volumen = texto;
     if (_errores.containsKey('volumenMl')) {
       _errores = Map.of(_errores)..remove('volumenMl');
@@ -149,6 +165,7 @@ class FormularioDonacionController extends ChangeNotifier {
 
   /// Devuelve true si la unidad se agregó.
   bool agregarUnidad(String codigo) {
+    if (edicionBloqueada || _cerrado) return false;
     final limpio = codigo.trim();
     String? error;
     if (limpio.isEmpty) {
@@ -169,6 +186,7 @@ class FormularioDonacionController extends ChangeNotifier {
   }
 
   void quitarUnidad(String codigo) {
+    if (edicionBloqueada || _cerrado) return;
     _codigos.remove(codigo);
     _avisar();
   }
@@ -176,7 +194,7 @@ class FormularioDonacionController extends ChangeNotifier {
   /// Valida y guarda. Devuelve la donación confirmada, o null si hubo errores.
   /// Ante cualquier fallo conserva todo lo escrito.
   Future<Donacion?> confirmar() async {
-    if (_guardando) return null;
+    if (_guardando || _cerrado) return null;
     _errorGeneral = null;
     if (!autorizado) {
       _errorGeneral = 'Tu perfil no puede registrar donaciones.';
@@ -185,24 +203,42 @@ class FormularioDonacionController extends ChangeNotifier {
     }
 
     final volumen = int.tryParse(_volumen.trim());
-    final datos = DatosDonacion(
-      claveConfirmacion: claveConfirmacion,
-      donanteId: _donante?.id ?? '',
-      evaluacionId: _evaluacion?.id ?? '',
-      fechaExtraccion: _fechaExtraccion,
-      volumenMl: volumen ?? 0,
-      codigosUnidades: _codigos,
-    );
+    final pendiente = _confirmacionPendiente;
+    final datos =
+        pendiente ??
+        DatosDonacion(
+          claveConfirmacion: claveConfirmacion,
+          donanteId: _donante?.id ?? '',
+          evaluacionId: _evaluacion?.id ?? '',
+          fechaExtraccion: _fechaExtraccion,
+          volumenMl: volumen ?? 0,
+          codigosUnidades: _codigos,
+        );
 
     _guardando = true;
+    _confirmacionPendiente = datos;
     _errores = const {};
     _avisar();
     try {
-      return await registro.confirmar(datos, evaluacion: _evaluacion);
+      // Una respuesta perdida puede ocultar un guardado exitoso. Se reenvía
+      // exactamente la solicitud original, con su clave, para recuperarlo.
+      final donacion = pendiente == null
+          ? await registro.confirmar(datos, evaluacion: _evaluacion)
+          : await registro.repositorio.guardar(datos);
+      _confirmacionPendiente = null;
+      return donacion;
     } on ValidacionDonacionException catch (error) {
+      _confirmacionPendiente = null;
       _errores = _ajustarErrores(error.errores, volumen);
       _errorGeneral = 'Revisar los datos marcados antes de confirmar.';
     } on DonacionApiException catch (error) {
+      // Un rechazo explícito de la API permite corregir los datos. Un fallo
+      // de transporte, 5xx o respuesta de éxito ilegible deja el resultado
+      // pendiente: cambiar la clave o el contenido podría duplicar el registro.
+      final codigo = error.codigo;
+      if (codigo != null && codigo >= 400 && codigo < 500) {
+        _confirmacionPendiente = null;
+      }
       _errores = error.errores;
       _errorGeneral = error.mensaje;
     } catch (_) {
@@ -213,6 +249,7 @@ class FormularioDonacionController extends ChangeNotifier {
     }
     return null;
   }
+
   Map<String, String> _ajustarErrores(Map<String, String> base, int? volumen) {
     final errores = Map.of(base);
     if (_donante == null) {
@@ -226,6 +263,7 @@ class FormularioDonacionController extends ChangeNotifier {
     }
     return errores;
   }
+
   static String _mensaje(Object error, String porDefecto) => switch (error) {
     DonacionApiException(:final mensaje) => mensaje,
     DonanteApiException(:final mensaje) => mensaje,

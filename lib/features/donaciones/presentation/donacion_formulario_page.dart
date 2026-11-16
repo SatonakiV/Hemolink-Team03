@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+
 import '../../../core/access/auth_session.dart';
 import '../../aptitud/data/evaluacion_repository.dart';
 import '../../aptitud/domain/evaluacion_aptitud.dart';
@@ -64,9 +65,11 @@ class _DonacionFormularioPageState extends State<DonacionFormularioPage> {
     _codigo.dispose();
     super.dispose();
   }
+
   void _agregarUnidad() {
     if (_formulario.agregarUnidad(_codigo.text)) _codigo.clear();
   }
+
   Future<void> _elegirFecha() async {
     final elegida = await showDatePicker(
       context: context,
@@ -76,8 +79,9 @@ class _DonacionFormularioPageState extends State<DonacionFormularioPage> {
       helpText: 'Fecha de extracción',
       cancelText: 'Cancelar',
     );
-    if(elegida != null) _formulario.cambiarFecha(elegida);
+    if (elegida != null) _formulario.cambiarFecha(elegida);
   }
+
   Future<void> _confirmar() async {
     final donacion = await _formulario.confirmar();
     if (donacion == null || !mounted) return;
@@ -117,10 +121,11 @@ class _DonacionFormularioPageState extends State<DonacionFormularioPage> {
       ),
     );
   }
+
   List<Widget> _contenido(BuildContext context) {
     final f = _formulario;
     final colorError = Theme.of(context).colorScheme.error;
-    final bloqueado = f.guardando || !f.autorizado;
+    final bloqueado = f.edicionBloqueada || !f.autorizado;
     return [
       if (!f.autorizado)
         Padding(
@@ -191,7 +196,10 @@ class _DonacionFormularioPageState extends State<DonacionFormularioPage> {
         onChanged: f.cambiarVolumen,
       ),
       const SizedBox(height: 24),
-      Text('Unidades obtenidas', style: Theme.of(context).textTheme.titleMedium),
+      Text(
+        'Unidades obtenidas',
+        style: Theme.of(context).textTheme.titleMedium,
+      ),
       const SizedBox(height: 8),
       Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -236,15 +244,28 @@ class _DonacionFormularioPageState extends State<DonacionFormularioPage> {
           ],
         ),
       const SizedBox(height: 8),
-      const Text('El grupo ABO/Rh de cada unidad se copia del donante al confirmar.',),
+      const Text(
+        'El grupo ABO/Rh de cada unidad se copia del donante al confirmar.',
+      ),
       const SizedBox(height: 16),
       _dato(
         'Vencimiento de cada unidad',
         _fecha(f.vencimiento),
         const Key('donacion-vencimiento'),
       ),
-      const Text('Se calcula como extracción + 42 días y no se puede modificar.'),
+      const Text(
+        'Se calcula como extracción + 42 días y no se puede modificar.',
+      ),
       const SizedBox(height: 24),
+      if (f.confirmacionPendiente && !f.guardando)
+        const Padding(
+          padding: EdgeInsets.only(bottom: 12),
+          child: Text(
+            'No se pudo confirmar si la donación quedó registrada. '
+            'Reintenta la confirmación antes de editar los datos.',
+            key: Key('donacion-confirmacion-pendiente'),
+          ),
+        ),
       if (f.errorGeneral != null)
         Padding(
           padding: const EdgeInsets.only(bottom: 12),
@@ -259,11 +280,18 @@ class _DonacionFormularioPageState extends State<DonacionFormularioPage> {
         ),
       FilledButton(
         key: const Key('donacion-confirmar'),
-        onPressed: bloqueado ? null : _confirmar,
-        child: Text(f.guardando ? 'Guardando…' : 'Confirmar donación'),
+        onPressed: f.guardando || !f.autorizado ? null : _confirmar,
+        child: Text(
+          f.guardando
+              ? 'Guardando…'
+              : f.confirmacionPendiente
+              ? 'Reintentar confirmación'
+              : 'Confirmar donación',
+        ),
       ),
     ];
   }
+
   Widget _aptitud(BuildContext context) {
     final f = _formulario;
     if (f.donante == null) {
@@ -296,6 +324,7 @@ class _DonacionFormularioPageState extends State<DonacionFormularioPage> {
       style: permite ? null : TextStyle(color: colorError),
     );
   }
+
   Widget _dato(String etiqueta, String valor, Key key, {String? error}) =>
       InputDecorator(
         decoration: InputDecoration(

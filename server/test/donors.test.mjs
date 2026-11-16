@@ -323,105 +323,166 @@ test('T04.4: PUT /api/donors/:id actualiza datos, conserva id y metadatos, regis
   assert.equal(recuperado.data.item.usuarioModificacionId, 'nursing-demo');
 });
 
-test('UT04.6-A a E: regresión y trazabilidad del flujo de corrección con evaluaciones, donaciones, unidades y muestras', async t => {
+// Origen completo registrado por HTTP, compartido por las regresiones T04.6.
+async function fixtureTrazabilidad(t) {
   const f = await fixture(t);
-
-  // 1. Crear donante
   const dRes = await f.api('/api/donors', { method: 'POST', body: donor });
   assert.equal(dRes.status, 201);
   const donorId = dRes.data.item.id;
-
-  // 2. Crear evaluación
   const evRes = await f.api('/api/evaluations', {
-    method: 'POST',
-    body: {
+    method: 'POST', body: {
       id: 'EV_T046', donanteId: donorId, resultado: 'apto',
       fechaEvaluacion: '2026-11-09', fechaFinVigencia: '2026-11-20',
     },
   });
   assert.equal(evRes.status, 201);
-
-  // 3. Crear donación (con 1 unidad U-046)
   const donRes = await f.api('/api/donations', {
-    method: 'POST',
-    body: {
-      claveConfirmacion: 'clave-t046-000000001',
-      donanteId: donorId,
-      evaluacionId: 'EV_T046',
-      fechaExtraccion: '2026-11-09',
-      volumenMl: 450,
+    method: 'POST', body: {
+      claveConfirmacion: 'clave-t046-000000001', donanteId: donorId,
+      evaluacionId: 'EV_T046', fechaExtraccion: '2026-11-09', volumenMl: 450,
       unidades: [{ codigo: 'U-046' }],
     },
   });
   assert.equal(donRes.status, 201);
   const donationId = donRes.data.item.id;
-
-  // 4. Crear muestra
   const sampleRes = await f.api('/api/samples', {
-    method: 'POST',
-    body: { codigo: 'M-046', donacionId: donationId },
+    method: 'POST', body: { codigo: 'M-046', donacionId: donationId },
   });
   assert.equal(sampleRes.status, 201);
   const sampleId = sampleRes.data.item.id;
-
-  // UT04.6-D: Sin token (401) o con rol no autorizado (403) no se puede modificar
-  const sinToken = await f.request(`/api/donors/${donorId}`, {
-    method: 'PUT', body: { ...donor, nombre: 'Intento Sin Token' },
-  });
-  assert.equal(sinToken.status, 401);
-
   const tokenInventario = await f.login('inventario@hemolink.test');
-  const rolAjeno = await f.request(`/api/donors/${donorId}`, {
-    method: 'PUT', body: { ...donor, nombre: 'Intento Rol Ajeno' }, token: tokenInventario,
-  });
-  assert.equal(rolAjeno.status, 403);
 
-  // UT04.6-C: RUT duplicado ajeno (409) o fallo de validación (400) mantiene la versión guardada intacta
-  const rutDuplicado = await f.api(`/api/donors/${donorId}`, {
-    method: 'PUT', body: { ...donor, rut: '11.111.111-1' },
-  });
-  assert.equal(rutDuplicado.status, 409);
+  async function consultar() {
+    const evaluacion = await f.api('/api/evaluations/EV_T046');
+    const donacion = await f.api('/api/donations/' + donationId);
+    const muestra = await f.api('/api/samples/' + sampleId);
+    const inventario = await f.request('/api/inventory', { token: tokenInventario });
+    for (const respuesta of [evaluacion, donacion, muestra, inventario]) {
+      assert.equal(respuesta.status, 200);
+    }
+    // El detalle incorpora la ficha actual. Solo ella debe cambiar al corregir;
+    // todos los campos propios de la donación y del origen deben conservarse.
+    const { donante, ...historico } = donacion.data.item;
+    assert.equal(donante.id, donorId);
+    const ficha = await f.api('/api/donors/' + donorId);
+    assert.equal(ficha.status, 200);
+    assert.deepEqual(donante, ficha.data.item);
+    return {
+      evaluacion: evaluacion.data.item,
+      donacion: historico,
+      muestra: muestra.data.item,
+      inventario: inventario.data.items,
+    };
+  }
+  return { f, donorId, tokenInventario, consultar, original: dRes.data.item };
+}
 
-  // UT04.6-A y UT04.6-B: Editar donante (cambiar grupo de O+ a A+) y verificar conservación de relaciones e invariante del grupo de la unidad histórica
-  const tokenEnfermeria = await f.login('enfermeria@hemolink.test');
-  const edicion = await f.api(`/api/donors/${donorId}`, {
-    method: 'PUT',
-    body: {
-      ...donor,
-      nombre: 'Donante Corregido Trazabilidad',
-      grupoAbo: 'A',
-      factorRh: 'positivo',
-      telefono: '999111222',
+test('UT04.6-A/B/E: corrección y reinicio conservan todo el historial y el inventario', async t => {
+  const { f, donorId, consultar, original } = await fixtureTrazabilidad(t);
+  const antes = await consultar();
+  const otrosRegistros = f.store.read().records.filter(r => r.id !== donorId);
+  assert.equal(antes.donacion.unidades.length, 1);
+  assert.equal(antes.donacion.unidades[0].grupoAbo, 'O');
+  assert.equal(antes.donacion.unidades[0].factorRh, 'positivo');
+
+  const edicion = await f.api('/api/donors/' + donorId, {
+    method: 'PUT', body: {
+      ...donor, rut: ' 12345678-5 ', nombre: 'Donante Corregido Trazabilidad',
+      pesoKg: 74, grupoAbo: 'A', factorRh: 'negativo', telefono: '999111222',
     },
   });
   assert.equal(edicion.status, 200);
-  assert.equal(edicion.data.item.grupoAbo, 'A');
+  assert.deepEqual(edicion.data.item, {
+    ...original, nombre: 'Donante Corregido Trazabilidad',
+    label: 'Donante Corregido Trazabilidad', pesoKg: 74,
+    grupoAbo: 'A', factorRh: 'negativo', telefono: '999111222',
+    usuarioModificacionId: 'nursing-demo', fechaModificacion: new Date(now).toISOString(),
+  });
 
-  // UT04.6-E: Recuperar tras reinicio y verificar persistencia y trazabilidad completa
-  await f.restart();
-
-  // Donante editado recuperado
-  const donanteRecuperado = await f.api(`/api/donors/${donorId}`);
-  assert.equal(donanteRecuperado.status, 200);
-  assert.equal(donanteRecuperado.data.item.nombre, 'Donante Corregido Trazabilidad');
-  assert.equal(donanteRecuperado.data.item.grupoAbo, 'A');
-
-  // Evaluación intacta y vinculada
-  const evalRecuperada = await f.api(`/api/evaluations?donanteId=${donorId}`);
-  assert.equal(evalRecuperada.status, 200);
-  assert.equal(evalRecuperada.data.items[0].id, 'EV_T046');
-
-  // Donación e inventario intactos: la unidad histórica conserva grupo 'O' de extracción
-  const donacionRecuperada = await f.api(`/api/donations/${donationId}`);
-  assert.equal(donacionRecuperada.status, 200);
-  assert.equal(donacionRecuperada.data.item.donanteId, donorId);
-  assert.equal(donacionRecuperada.data.item.unidades[0].grupoAbo, 'O');
-
-  // Muestra intacta y vinculada a donación y donante
-  const muestraRecuperada = await f.api(`/api/samples/${sampleId}`);
-  assert.equal(muestraRecuperada.status, 200);
-  assert.equal(muestraRecuperada.data.item.donacionId, donationId);
-  assert.equal(muestraRecuperada.data.item.donanteId, donorId);
+  for (const reiniciar of [false, true]) {
+    if (reiniciar) await f.restart();
+    assert.deepEqual(await consultar(), antes);
+    assert.deepEqual(f.store.read().records.filter(r => r.id !== donorId), otrosRegistros);
+    const ficha = await f.api('/api/donors/' + donorId);
+    assert.equal(ficha.status, 200);
+    assert.deepEqual(ficha.data.item, edicion.data.item);
+  }
 });
 
+test('UT04.6-C: duplicado, validación y fallo real de escritura no alteran datos; se puede reintentar', async t => {
+  const { f, donorId, consultar } = await fixtureTrazabilidad(t);
+  const antes = await consultar();
+  const estado = f.store.read();
+  const archivo = readFileSync(f.databasePath, 'utf8');
+  const intentos = [
+    ['RUT de otro donante', { rut: '11.111.111-1' }, 409],
+    ['verificador incorrecto', { rut: '12.345.678-9' }, 400],
+    ['peso cero', { pesoKg: 0 }, 400],
+    ['nacimiento futuro', { fechaNacimiento: '2026-11-10' }, 400],
+    ['ABO inválido', { grupoAbo: 'C' }, 400],
+    ['Rh inválido', { factorRh: 'desconocido' }, 400],
+    ['campo obligatorio vacío', { nombre: '' }, 400],
+    ['fallo de disco', {}, 500],
+  ];
+  for (const [nombre, cambios, status] of intentos) {
+    await t.test(nombre, async () => {
+      let respuesta;
+      try {
+        // El archivo JSON existente no puede usarse como directorio. La llamada
+        // ejecuta la transacción y falla al escribir su archivo temporal real.
+        if (status === 500) f.store.path = join(f.databasePath, 'destino-invalido.json');
+        respuesta = await f.api('/api/donors/' + donorId, {
+          method: 'PUT', body: { ...donor, nombre: 'No debe guardarse', ...cambios },
+        });
+      } finally {
+        f.store.path = f.databasePath;
+      }
+      assert.equal(respuesta.status, status);
+      assert.equal(respuesta.data.item, undefined);
+      assert.deepEqual(f.store.read(), estado);
+      assert.equal(readFileSync(f.databasePath, 'utf8'), archivo);
+      assert.deepEqual(await consultar(), antes);
+      await f.restart();
+      assert.deepEqual(f.store.read(), estado);
+      assert.deepEqual(await consultar(), antes);
+    });
+  }
+  const reintento = await f.api('/api/donors/' + donorId, {
+    method: 'PUT', body: { ...donor, nombre: 'Corrección reintentada' },
+  });
+  assert.equal(reintento.status, 200);
+  await f.restart();
+  const recuperado = await f.api('/api/donors/' + donorId);
+  assert.equal(recuperado.status, 200);
+  assert.deepEqual(recuperado.data.item, reintento.data.item);
+  assert.deepEqual(await consultar(), antes);
+});
 
+test('UT04.6-D: sin sesión, inventario y hospital no modifican la ficha ni el origen', async t => {
+  const { f, donorId, tokenInventario, consultar } = await fixtureTrazabilidad(t);
+  const tokenHospital = await f.login('hospital@hemolink.test');
+  const estado = f.store.read();
+  const archivo = readFileSync(f.databasePath, 'utf8');
+  const antes = await consultar();
+  for (const [nombre, token, status] of [
+    ['sin sesión', undefined, 401], ['token falso', 'inventado', 401],
+    ['inventario', tokenInventario, 403], ['hospital', tokenHospital, 403],
+  ]) {
+    await t.test(nombre, async () => {
+      const respuesta = await f.request('/api/donors/' + donorId, {
+        method: 'PUT', token,
+        body: { ...donor, nombre: 'Intento no autorizado', grupoAbo: 'AB', factorRh: 'negativo' },
+      });
+      assert.equal(respuesta.status, status);
+      assert.equal(respuesta.data.item, undefined);
+      assert.equal(respuesta.data.items, undefined);
+      assert.ok(!JSON.stringify(respuesta.data).includes(donor.rut));
+      assert.deepEqual(f.store.read(), estado);
+      assert.equal(readFileSync(f.databasePath, 'utf8'), archivo);
+      assert.deepEqual(await consultar(), antes);
+      await f.restart();
+      assert.deepEqual(f.store.read(), estado);
+      assert.deepEqual(await consultar(), antes);
+    });
+  }
+});
