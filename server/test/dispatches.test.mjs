@@ -38,3 +38,36 @@ test('UT10.1-A: programado acepta fecha civil válida', () => {
     );
   }
 });
+
+test('UT10.1-B: urgente acepta motivo y rechaza blancos', () => {
+  const comandoValido = validarComandoDespacho({
+    tipo: 'urgente',
+    motivo: '  Cirugía de emergencia  ',
+    reservaIds: ['RES-003'],
+  });
+
+  assert.equal(comandoValido.tipo, 'urgente');
+  assert.equal(comandoValido.fechaPrevista, null);
+  assert.equal(comandoValido.motivo, 'Cirugía de emergencia');
+  assert.deepEqual(comandoValido.reservaIds, ['RES-003']);
+
+  const comprobante = crearComprobanteDespacho(comandoValido, {
+    clock: () => new Date('2026-11-20T11:00:00Z').getTime(),
+  });
+  assert.equal(comprobante.tipo, 'urgente');
+  assert.equal(comprobante.motivo, 'Cirugía de emergencia');
+  assert.deepEqual(comprobante.reservaIds, ['RES-003']);
+
+  // Rechaza motivo ausente, vacío o compuesto solo de espacios en blanco
+  for (const motivoInvalido of [undefined, null, '', '   ', '\t\n']) {
+    assert.throws(
+      () =>
+        validarComandoDespacho({
+          tipo: 'urgente',
+          motivo: motivoInvalido,
+          reservaIds: ['RES-003'],
+        }),
+      (err) => err instanceof DispatchError && err.status === 400
+    );
+  }
+});
