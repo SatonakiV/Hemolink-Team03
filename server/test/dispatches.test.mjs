@@ -71,3 +71,51 @@ test('UT10.1-B: urgente acepta motivo y rechaza blancos', () => {
     );
   }
 });
+
+test('UT10.1-C: selección vacía o con IDs repetidos se rechaza', () => {
+  // Rechaza selección no proporcionada, vacía o nula
+  for (const seleccionInvalida of [undefined, null, [], 'no-array', {}]) {
+    assert.throws(
+      () =>
+        validarComandoDespacho({
+          tipo: 'programado',
+          fechaPrevista: '2026-12-01',
+          reservaIds: seleccionInvalida,
+        }),
+      (err) => err instanceof DispatchError && err.status === 400
+    );
+  }
+
+  // Rechaza IDs vacíos dentro del arreglo
+  assert.throws(
+    () =>
+      validarComandoDespacho({
+        tipo: 'programado',
+        fechaPrevista: '2026-12-01',
+        reservaIds: ['RES-001', '   '],
+      }),
+    (err) => err instanceof DispatchError && err.status === 400
+  );
+
+  // Rechaza IDs de reserva duplicados (e.g. ['RES-001', 'RES-001'])
+  assert.throws(
+    () =>
+      validarComandoDespacho({
+        tipo: 'programado',
+        fechaPrevista: '2026-12-01',
+        reservaIds: ['RES-001', 'RES-002', 'RES-001'],
+      }),
+    (err) =>
+      err instanceof DispatchError &&
+      err.status === 400 &&
+      err.message.includes('duplicados')
+  );
+
+  // Admite propiedad alternativa 'unidades' si es un arreglo válido sin duplicados
+  const comandoConUnidades = validarComandoDespacho({
+    tipo: 'urgente',
+    motivo: 'Traslado de emergencia',
+    unidades: ['RES-010', 'RES-011'],
+  });
+  assert.deepEqual(comandoConUnidades.reservaIds, ['RES-010', 'RES-011']);
+});
