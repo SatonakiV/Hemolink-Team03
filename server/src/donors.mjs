@@ -1,4 +1,5 @@
 import { fechaValida } from './dates.mjs';
+import { GRUPOS_ABO, FACTORES_RH } from './blood-groups.mjs';
 
 export class DonanteError extends Error {
   constructor(status, message, errors) {
@@ -45,8 +46,8 @@ export function validarDonante(datos, hoy) {
   if (typeof datos.pesoKg !== 'number' || !Number.isFinite(datos.pesoKg) || datos.pesoKg <= 0) {
     errors.pesoKg = 'El peso debe ser un número positivo en kilogramos.';
   }
-  if (!['A', 'B', 'AB', 'O'].includes(grupoAbo)) errors.grupoAbo = 'Selecciona un grupo sanguíneo A, B, AB u O.';
-  if (!['positivo', 'negativo'].includes(factorRh)) errors.factorRh = 'Selecciona un factor Rh positivo o negativo.';
+  if (!GRUPOS_ABO.includes(grupoAbo)) errors.grupoAbo = 'Selecciona un grupo sanguíneo A, B, AB u O.';
+  if (!FACTORES_RH.includes(factorRh)) errors.factorRh = 'Selecciona un factor Rh positivo o negativo.';
   if (!telefono) errors.telefono = 'El teléfono es obligatorio.';
   if (Object.keys(errors).length) throw new DonanteError(400, 'Revisa los datos del donante.', errors);
   // Lista explícita: nunca persistir cuestionarios ni metadatos enviados por el cliente.
