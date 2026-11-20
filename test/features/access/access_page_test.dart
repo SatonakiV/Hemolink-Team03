@@ -34,6 +34,10 @@ AuthSession sessionFor({String role = 'nursing', bool rejected = false}) =>
         if (request.url.path == '/api/logout') {
           return jsonResponse({'message': 'Sesión cerrada.'});
         }
+        if (request.url.path == '/api/inventory') {
+          expect(request.headers['Authorization'], 'Bearer opaque');
+          return jsonResponse({'items': [], 'total': 0});
+        }
         return jsonResponse({
           'items': [
             {'label': 'Registro persistente de prueba'},
@@ -152,6 +156,10 @@ void main() {
         expect(find.text('Ficha del donante'), findsOneWidget);
         await tester.pageBack();
         await tester.pumpAndSettle();
+        await tester.pageBack();
+        await tester.pumpAndSettle();
+      } else if (role == 'inventory') {
+        expect(find.text('0 unidades disponibles'), findsOneWidget);
         await tester.pageBack();
         await tester.pumpAndSettle();
       } else {

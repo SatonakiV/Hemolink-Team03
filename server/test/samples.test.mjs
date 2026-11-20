@@ -10,15 +10,16 @@ async function fixture(t) {
   const databasePath = join(directory, 'db.json');
   let app, base;
   async function start(seedDemo) {
-    app = createApplication({ databasePath, seedDemo });
+    app = createApplication({ databasePath, seedDemo, clock: () => new Date(2026, 10, 19, 12).getTime() });
     await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve));
     base = `http://127.0.0.1:${app.server.address().port}`;
   }
   await start(true);
   app.store.update(db => {
-    db.records.find(item => item.id === 'demo-inventory').donacionId = 'DON001';
     db.records.push(
     { id: 'DON001', module: 'donations', donanteId: 'demo-donors', scopeId: 'sede-central' },
+    { id: 'U001', module: 'inventory', scopeId: 'sede-central', donacionId: 'DON001',
+      codigo: 'U-001', grupoAbo: 'O', factorRh: 'positivo', estado: 'disponible', fechaVencimiento: '2026-12-14' },
     { id: 'DON_AJENA', module: 'donations', donanteId: 'D_AJENO', scopeId: 'otra-sede' },
     { id: 'D_AJENO', module: 'donors', scopeId: 'otra-sede' },
     { id: 'DON_SIN_DONANTE', module: 'donations', donanteId: 'no-existe', scopeId: 'sede-central' },
@@ -60,6 +61,7 @@ test('PR17: persiste muestra con origen y responsable del servidor; consulta tra
   const token = await f.login();
   const inventoryToken = await f.login('inventario');
   const stock = await f.request('/api/inventory', { token: inventoryToken });
+  assert.equal(stock.data.total, 1);
   assert.equal(stock.data.items[0].donacionId, 'DON001');
   const r = await f.request('/api/samples', { token, method: 'POST', body: {
     codigo: ' m-001 ', donacionId: ' DON001 ',
