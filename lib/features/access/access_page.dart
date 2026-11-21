@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+
 import '../../core/access/access_policy.dart';
 import '../../core/access/app_user.dart';
 import '../../core/access/auth_session.dart';
@@ -7,6 +8,7 @@ import '../donantes/data/crear_repositorio_donantes.dart';
 import '../donantes/data/donante_repository.dart';
 import '../donantes/presentation/donantes_page.dart';
 import '../donaciones/presentation/donaciones_page.dart';
+import '../inventario/presentation/inventario_page.dart';
 
 const moduleNames = {
   'donors': 'Donantes',
@@ -87,6 +89,26 @@ class _AccessPageState extends State<AccessPage> {
     await _perform(() async {
       await _session.login(_email.text, _password.text);
       _password.clear();
+    });
+  }
+
+  Future<void> _abrirModulo(String module) async {
+    final page = switch (module) {
+      'donors' => DonantesPage(sesion: _session, repositorio: _donantes),
+      'donations' => DonacionesPage(sesion: _session),
+      'inventory' => InventarioPage(sesion: _session),
+      _ => null,
+    };
+    if (page != null) {
+      await Navigator.of(context)
+          .push(MaterialPageRoute<void>(builder: (_) => page));
+      if (mounted && _session.currentUser == null) setState(() {});
+      return;
+    }
+    await _perform(() async {
+      _module = module;
+      _items = null;
+      _items = await _session.loadModule(module);
     });
   }
 
@@ -269,29 +291,7 @@ class _AccessPageState extends State<AccessPage> {
                                 child: OutlinedButton(
                                   onPressed: _busy
                                       ? null
-                                      : module == 'donors'
-                                      ? () => Navigator.of(context).push(
-                                          MaterialPageRoute<void>(
-                                            builder: (_) => DonantesPage(
-                                              sesion: _session,
-                                              repositorio: _donantes,
-                                            ),
-                                          ),
-                                        )
-                                      : module == 'donations' ? () => Navigator.of(context).push(
-                                          MaterialPageRoute<void>(
-                                            builder: (_) => DonacionesPage(
-                                              sesion: _session,
-                                              ),
-                                            ),
-                                          )
-                                      : () => _perform(() async {
-                                          _module = module;
-                                          _items = null;
-                                          _items = await _session.loadModule(
-                                            module,
-                                          );
-                                        }),
+                                      : () => _abrirModulo(module),
                                   child: Text(moduleNames[module]!),
                                 ),
                               ),

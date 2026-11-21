@@ -2,6 +2,8 @@ import { createServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { openStore } from './store.mjs';
 import { fechaValida, fechaLocal } from './dates.mjs';
+import { GRUPOS_ABO, FACTORES_RH } from './blood-groups.mjs';
+import { consultarStock } from './inventory.mjs';
 import { DonanteError, normalizarRut, rutValido, validarDonante } from './donors.mjs';
 import { DonacionError, validarDonacion, registrarDonacion, detalleDonacion, confirmacionPrevia} from './donations.mjs';
 import { donacionDeSede, registrarMuestra } from './samples.mjs';
@@ -494,7 +496,7 @@ export function createApplication({
         throw new ApiError(405, 'Operación no implementada.');
       }
 
-      // Se conservan los módulos de consulta existentes.
+      // Consultas habilitadas según el rol de la sesión.
       const module = path.startsWith('/api/') ? path.slice(5) : '';
 
       if (Object.values(roleModules).flat().includes(module)) {
@@ -506,6 +508,23 @@ export function createApplication({
 
         if (request.method !== 'GET') {
           throw new ApiError(405, 'Operación no implementada.');
+        }
+
+        if (module === 'inventory') {
+          const sedeId = url.searchParams.get('sedeId') ?? undefined;
+          const grupoAbo = url.searchParams.get('grupoAbo')?.trim().toUpperCase();
+          const factorRh = url.searchParams.get('factorRh')?.trim().toLowerCase();
+          if (sedeId !== undefined && !sedeId.trim()) {
+            throw new ApiError(400, 'La sede no es válida.');
+          }
+          if (grupoAbo !== undefined && !GRUPOS_ABO.includes(grupoAbo)) {
+            throw new ApiError(400, 'El grupo ABO no es válido.');
+          }
+          if (factorRh !== undefined && !FACTORES_RH.includes(factorRh)) {
+            throw new ApiError(400, 'El factor Rh no es válido.');
+          }
+          send(200, consultarStock(store, { sedeId, grupoAbo, factorRh, hoy: fechaLocal(clock) }));
+          return;
         }
 
         const scope = user.role === 'hospital'

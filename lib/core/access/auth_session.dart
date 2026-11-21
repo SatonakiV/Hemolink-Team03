@@ -42,6 +42,7 @@ class AuthSession {
   Future<Map<String, dynamic>> _request(
     String path, {
     Map<String, dynamic>? body,
+    Map<String, String>? queryParameters,
     bool post = false,
   }) async {
     try {
@@ -49,7 +50,8 @@ class AuthSession {
         'Content-Type': 'application/json',
         if (_token != null) 'Authorization': 'Bearer $_token',
       };
-      final url = Uri.parse('$baseUrl/api/$path');
+      final url = Uri.parse('$baseUrl/api/$path')
+          .replace(queryParameters: queryParameters);
       final response =
           await (post
                   ? _client.post(
@@ -127,8 +129,13 @@ class AuthSession {
     await _clear();
   }
 
+  Future<Map<String, dynamic>> loadModuleData(
+    String module, {
+    Map<String, String>? queryParameters,
+  }) => _request(module, queryParameters: queryParameters);
+
   Future<List<Map<String, dynamic>>> loadModule(String module) async {
-    final data = await _request(module);
+    final data = await loadModuleData(module);
     return (data['items'] as List).cast<Map<String, dynamic>>();
   }
 
