@@ -1,3 +1,4 @@
+
 import { createServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { openStore } from './store.mjs';
@@ -8,6 +9,8 @@ import { DonanteError, normalizarRut, rutValido, validarDonante } from './donors
 import { DonacionError, validarDonacion, registrarDonacion, detalleDonacion, confirmacionPrevia} from './donations.mjs';
 import { donacionDeSede, registrarMuestra } from './samples.mjs';
 import { SolicitudError, validarSolicitud, ordenarBandeja, crearSolicitud, obtenerFichaSolicitud } from './requests.mjs';
+import { AtencionParcialError } from './partial-fulfillment.mjs';
+import { atenderPedidoParcial } from './partial-fulfillment-integration.mjs';
 import {
   matchesPassword, passwordHash, tokenHash, newToken,
   publicUser, isAuthorizedUser, roleModules, seedDemoData,
@@ -228,7 +231,6 @@ export function createApplication({
             fechaRegistro: new Date(clock()).toISOString(),
           };
           store.update(db => {
-            // Comprobar dentro de la transacción serializada, no antes de guardar.
             if (db.records.some(record => record.module === 'donors' &&
                 normalizarRut(record.rut) === datos.rut)) {
               throw new DonanteError(409, 'Ya existe un donante con ese RUT.', {
@@ -271,7 +273,6 @@ export function createApplication({
           return;
         }
 
-        // T04.4: corrección de antecedentes del donante.
         if (request.method === 'PUT' && path.startsWith('/api/donors/')) {
           const id = path.slice('/api/donors/'.length);
           if (!/^[A-Za-z0-9_-]{1,64}$/.test(id)) {
@@ -286,7 +287,6 @@ export function createApplication({
             if (index === -1) {
               throw new ApiError(404, 'Donante no encontrado.');
             }
-            // UT04.4-B: unicidad excluyendo al propio registro.
             if (db.records.some(record =>
               record.module === 'donors' &&
               record.id !== id &&
@@ -318,7 +318,6 @@ export function createApplication({
         throw new ApiError(405, 'Operación no implementada.');
       }
 
-      // T02.1: lectura y escritura de evaluaciones, solo para enfermería.
       if (path === '/api/evaluations' || path.startsWith('/api/evaluations/')) {
         const { user } = authenticate(request);
 
@@ -399,11 +398,8 @@ export function createApplication({
             }
 
             items = items.filter(item => item.donanteId === donanteId);
-
           }
 
-          // Las transacciones agregan al final del historial persistido. La última
-          // registrada es actual, incluso con fecha clínica anterior o igual hora.
           items.reverse();
 
           send(200, { items });
@@ -413,7 +409,6 @@ export function createApplication({
         throw new ApiError(405, 'Operación no implementada.');
       }
 
-      // PR17: muestras persistidas, separadas de las unidades de inventario.
       if (path === '/api/samples' || path.startsWith('/api/samples/')) {
         const { user } = authenticate(request);
         if (user.role !== 'nursing') {
@@ -450,8 +445,6 @@ export function createApplication({
         throw new ApiError(405, 'Operación no implementada.');
       }
 
-      // T03.1: donaciones y unidades, solo para enfermería. La sede y el responsable
-      // salen de la sesión; el vencimiento lo calcula el servidor.
       if (path === '/api/donations' || path.startsWith('/api/donations/')) {
         const { user } = authenticate(request);
         if (!roleModules[user.role]?.includes('donations')) {
@@ -463,8 +456,6 @@ export function createApplication({
           let item;
           let created = false;
           store.update(db => {
-            // La idempotencia y el resultado pertenecen a la misma transacción,
-            // incluso cuando dos procesos comparten la base JSON.
             const previa = confirmacionPrevia(db, user, datos);
             const id = previa?.id ?? randomUUID();
             if (!previa) {
@@ -497,12 +488,53 @@ export function createApplication({
         throw new ApiError(405, 'Operación no implementada.');
       }
 
-      // HU06 / T06.1: solicitudes hospitalarias y bandeja ordenada según rol.
+      // HU06 / T06.1: solicitudes y HU09 / T09.2: atención parcial.
       if (path === '/api/requests' || path.startsWith('/api/requests/')) {
         const { user } = authenticate(request);
 
         if (user.role !== 'hospital' && user.role !== 'inventory') {
           throw new ApiError(403, 'Tu perfil no puede gestionar solicitudes.');
+        }
+
+        const rutaAtencionParcial =
+          /^\/api\/requests\/([A-Za-z0-9_-]{1,64})\/partial-fulfillment$/.exec(path);
+
+        if (rutaAtencionParcial) {
+          if (request.method !== 'POST') {
+            throw new ApiError(405, 'Operación no implementada.');
+          }
+
+          if (user.role !== 'inventory') {
+            throw new ApiError(
+              403,
+              'Solo inventario puede confirmar atenciones parciales.',
+            );
+          }
+
+          const datos = await readBody(request);
+
+          try {
+            const resultado = await atenderPedidoParcial({
+              store,
+              user,
+              pedidoId: rutaAtencionParcial[1],
+              decision: datos.decision,
+              unidadesPropuestas: datos.unidadesPropuestas,
+              hoy: fechaLocal(clock),
+              ahora: new Date(clock()).toISOString(),
+            });
+
+            send(200, resultado);
+            return;
+          } catch (error) {
+            if (error instanceof AtencionParcialError) {
+              throw new ApiError(
+                error.code === 'STOCK_CONFLICT' ? 409 : 400,
+                error.message,
+              );
+            }
+            throw error;
+          }
         }
 
         if (path === '/api/requests' && request.method === 'POST') {
@@ -550,7 +582,6 @@ export function createApplication({
         throw new ApiError(405, 'Operación no implementada.');
       }
 
-      // Consultas habilitadas según el rol de la sesión.
       const module = path.startsWith('/api/') ? path.slice(5) : '';
 
       if (Object.values(roleModules).flat().includes(module)) {
@@ -596,7 +627,6 @@ export function createApplication({
 
       throw new ApiError(404, 'Recurso no encontrado.');
     } catch (error) {
-      // Nunca exponer rutas locales, contraseñas ni detalles internos.
       send(error.status ?? 500, {
         message: error.status
           ? error.message
@@ -607,8 +637,6 @@ export function createApplication({
     }
   });
 
-  // El ejecutable compacta al apagar; los consumidores de la aplicación pueden
-  // conservar el diario, pues cada COMMIT ya fue sincronizado.
   server.once('close', () => {
     try { store.close({ checkpoint: checkpointOnClose }); }
     catch { console.error('No se pudo compactar la base JSON; conserve la instantánea y su diario.'); }
