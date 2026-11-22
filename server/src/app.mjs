@@ -7,6 +7,7 @@ import { consultarStock } from './inventory.mjs';
 import { DonanteError, normalizarRut, rutValido, validarDonante } from './donors.mjs';
 import { DonacionError, validarDonacion, registrarDonacion, detalleDonacion, confirmacionPrevia} from './donations.mjs';
 import { donacionDeSede, registrarMuestra } from './samples.mjs';
+import { SolicitudError, validarSolicitud, ordenarBandeja, crearSolicitud, obtenerFichaSolicitud } from './requests.mjs';
 import {
   matchesPassword, passwordHash, tokenHash, newToken,
   publicUser, isAuthorizedUser, roleModules, seedDemoData,
@@ -496,6 +497,59 @@ export function createApplication({
         throw new ApiError(405, 'Operación no implementada.');
       }
 
+      // HU06 / T06.1: solicitudes hospitalarias y bandeja ordenada según rol.
+      if (path === '/api/requests' || path.startsWith('/api/requests/')) {
+        const { user } = authenticate(request);
+
+        if (user.role !== 'hospital' && user.role !== 'inventory') {
+          throw new ApiError(403, 'Tu perfil no puede gestionar solicitudes.');
+        }
+
+        if (path === '/api/requests' && request.method === 'POST') {
+          if (user.role !== 'hospital') {
+            throw new ApiError(403, 'Solo el hospital puede ingresar solicitudes.');
+          }
+          const datos = validarSolicitud(await readBody(request));
+          let item;
+          store.update(db => {
+            item = crearSolicitud(db, user, datos, {
+              id: randomUUID(),
+              ahora: new Date(clock()).toISOString(),
+              fecha: fechaLocal(clock),
+            });
+          });
+          send(201, { item });
+          return;
+        }
+
+        if (request.method === 'GET') {
+          if (path === '/api/requests') {
+            const db = user.role === 'hospital'
+              ? store.read({ records: { module: 'requests', scopeId: user.hospitalId } })
+              : store.read({ records: { module: 'requests' } });
+
+            let items = db.records.filter(r =>
+              r.module === 'requests' &&
+              (user.role === 'inventory' || r.scopeId === user.hospitalId)
+            );
+            items = ordenarBandeja(items);
+            send(200, { items });
+            return;
+          }
+
+          const id = path.slice('/api/requests/'.length);
+          if (!ID_VALIDO.test(id)) {
+            throw new ApiError(404, 'Solicitud no encontrada.');
+          }
+          const db = store.read();
+          const item = obtenerFichaSolicitud(db, user, id, { hoy: fechaLocal(clock) });
+          send(200, { item });
+          return;
+        }
+
+        throw new ApiError(405, 'Operación no implementada.');
+      }
+
       // Consultas habilitadas según el rol de la sesión.
       const module = path.startsWith('/api/') ? path.slice(5) : '';
 
@@ -547,7 +601,7 @@ export function createApplication({
         message: error.status
           ? error.message
           : 'No se pudo completar la operación.',
-        ...(error instanceof DonanteError || error instanceof DonacionError
+        ...(error instanceof DonanteError || error instanceof DonacionError || error instanceof SolicitudError
           ? { errors: error.errors } : {}),
       });
     }
