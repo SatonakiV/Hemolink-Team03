@@ -203,3 +203,122 @@ export function invalidarReservasVencidas(db, user, pedido, vencidas, hoy, ahora
   });
   return vencidas.map(({ unidad }) => unidad.id);
 }
+
+export function registrarSalidaDespacho(db, user, pedido, comando, seleccionadas, hoy, ahora) {
+  const comprobanteId = randomUUID();
+  for (const { unidad, reserva } of seleccionadas) {
+    Object.assign(unidad, {
+      estado: 'despachada', despachoId: comprobanteId, fechaDespacho: ahora,
+      usuarioDespachoId: user.id, usuarioModificacionId: user.id, fechaModificacion: ahora,
+    });
+    if (reserva) {
+      Object.assign(reserva, {
+        estado: 'cerrada', despachoId: comprobanteId,
+        usuarioModificacionId: user.id, fechaModificacion: ahora,
+      });
+    }
+  }
+
+  pedido.cantidadDespachada = (pedido.cantidadDespachada ?? 0) + seleccionadas.length;
+  const reservasRestantes = db.records.filter(
+    (r) =>
+      (r.module === 'reservations' || (r.module === 'inventory' && r.estado === 'reservada')) &&
+      r.pedidoId === pedido.id,
+  );
+  const saldos = calcularSaldosPedidoConReservas({
+    cantidadSolicitada: pedido.cantidadSolicitada,
+    cantidadDespachada: pedido.cantidadDespachada,
+    reservas: reservasRestantes,
+    hoy,
+  });
+  Object.assign(pedido, saldos, {
+    usuarioModificacionId: user.id,
+    fechaModificacion: ahora,
+  });
+
+  const comprobante = {
+    id: comprobanteId,
+    module: 'dispatches',
+    scopeId: user.siteId,
+    sedeId: user.siteId,
+    pedidoId: pedido.id,
+    hospitalId: pedido.hospitalId,
+    tipo: comando.tipo,
+    ...(comando.fechaPrevista ? { fechaPrevista: comando.fechaPrevista } : {}),
+    ...(comando.motivo ? { motivo: comando.motivo } : {}),
+    reservaIds: comando.reservaIds,
+    unidades: seleccionadas.map(({ unidad }) => unidad.id),
+    cantidad: seleccionadas.length,
+    ...(comando.claveConfirmacion ? { claveConfirmacion: comando.claveConfirmacion } : {}),
+    responsableId: user.id,
+    usuarioRegistroId: user.id,
+    fechaRegistro: ahora,
+  };
+  db.records.push(comprobante);
+
+  return { item: comprobante, comprobante, saldos, pedido, existente: false };
+}
+
+export async function confirmarDespacho({
+  store,
+  user,
+  pedidoId,
+  datos,
+  hoy,
+  ahora,
+}) {
+  if (!store || typeof store.update !== 'function') {
+    throw new TypeError('Se requiere un almacén con el método update.');
+  }
+
+  const fechaHoy = hoy || new Date().toISOString().slice(0, 10);
+  const fechaAhora = ahora || new Date().toISOString();
+  let resultadoFinal;
+  let invalidacionVencidas;
+
+  await store.update((db) => {
+    if (!user || typeof user !== 'object' || !user.id || user.role !== 'inventory' || !user.siteId) {
+      throw new DispatchError(403, 'Solo personal de inventario autorizado puede despachar unidades.');
+    }
+
+    if (datos?.sedeId !== undefined && datos.sedeId !== user.siteId) {
+      throw new DispatchError(409, 'La sede indicada no coincide con la de tu cuenta.');
+    }
+
+    const comando = validarComandoDespacho(datos, fechaHoy);
+    const idPedido = pedidoId || datos?.pedidoId;
+    if (!idPedido || typeof idPedido !== 'string') {
+      throw new DispatchError(400, 'Identificador de pedido inválido.');
+    }
+
+    const pedido = db.records.find((r) => r.module === 'requests' && r.id === idPedido);
+    if (!pedido) {
+      throw new DispatchError(404, 'El pedido no existe.');
+    }
+
+    const previa = confirmacionPreviaDespacho(db, user, comando, pedido.id);
+    if (previa) {
+      resultadoFinal = { item: previa, comprobante: previa, existente: true };
+      return;
+    }
+
+    const seleccionadas = validarUnidadesDespacho(db, user, pedido, comando.reservaIds);
+    const vencidas = seleccionadas.filter(({ unidad }) => fechaHoy >= unidad.fechaVencimiento);
+
+    if (vencidas.length > 0) {
+      invalidacionVencidas = invalidarReservasVencidas(db, user, pedido, vencidas, fechaHoy, fechaAhora);
+      return;
+    }
+
+    resultadoFinal = registrarSalidaDespacho(db, user, pedido, comando, seleccionadas, fechaHoy, fechaAhora);
+  });
+
+  if (invalidacionVencidas) {
+    throw new DispatchError(
+      409,
+      `Una o más reservas seleccionadas perdieron vigencia (${invalidacionVencidas.join(', ')}) y fueron invalidadas.`,
+    );
+  }
+
+  return resultadoFinal;
+}
