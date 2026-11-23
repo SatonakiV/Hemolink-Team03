@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { fechaValida } from './dates.mjs';
 
+const CLAVE = /^[A-Za-z0-9_-]{1,64}$/;
+
 export class DispatchError extends Error {
   constructor(status, message) {
     super(message);
@@ -8,7 +10,47 @@ export class DispatchError extends Error {
   }
 }
 
-export function validarComandoDespacho(datos) {
+export const huellaDespacho = (pedidoId, tipo, fechaPrevista, motivo, reservaIds) =>
+  JSON.stringify([
+    pedidoId,
+    tipo,
+    fechaPrevista ?? null,
+    motivo ?? null,
+    [...(reservaIds ?? [])].map(id => id.trim()).sort(),
+  ]);
+
+export function confirmacionPreviaDespacho(db, user, datos, pedidoId) {
+  if (!datos?.claveConfirmacion) return null;
+  const previa = db.records.find(
+    r =>
+      r.module === 'dispatches' &&
+      r.scopeId === user.siteId &&
+      r.claveConfirmacion === datos.claveConfirmacion,
+  );
+  if (!previa) return null;
+
+  const huellaExistente = huellaDespacho(
+    previa.pedidoId,
+    previa.tipo,
+    previa.fechaPrevista,
+    previa.motivo,
+    previa.reservaIds,
+  );
+  const huellaNueva = huellaDespacho(
+    pedidoId ?? datos.pedidoId,
+    datos.tipo,
+    datos.fechaPrevista,
+    datos.motivo,
+    datos.reservaIds ?? datos.unidades,
+  );
+
+  if (huellaExistente !== huellaNueva) {
+    throw new DispatchError(409, 'La clave de confirmación ya se usó con otros datos.');
+  }
+  return previa;
+}
+
+export function validarComandoDespacho(datos, hoy) {
   if (!datos || typeof datos !== 'object') {
     throw new DispatchError(400, 'Ingresa los datos del despacho.');
   }
@@ -25,6 +67,9 @@ export function validarComandoDespacho(datos) {
     const rawFecha = typeof datos.fechaPrevista === 'string' ? datos.fechaPrevista.trim() : '';
     if (!fechaValida(rawFecha)) {
       throw new DispatchError(400, 'Ingresa una fecha prevista válida (AAAA-MM-DD).');
+    }
+    if (hoy && rawFecha < hoy) {
+      throw new DispatchError(400, 'La fecha prevista no puede ser anterior a la fecha actual.');
     }
     fechaPrevista = rawFecha;
   } else if (tipo === 'urgente') {
@@ -55,11 +100,29 @@ export function validarComandoDespacho(datos) {
     throw new DispatchError(400, 'La selección no puede contener identificadores de reserva duplicados.');
   }
 
+  let claveConfirmacion = undefined;
+  if (datos.claveConfirmacion !== undefined) {
+    if (typeof datos.claveConfirmacion !== 'string' || !CLAVE.test(datos.claveConfirmacion)) {
+      throw new DispatchError(400, 'La clave de confirmación no es válida.');
+    }
+    claveConfirmacion = datos.claveConfirmacion;
+  }
+
+  let sedeId = undefined;
+  if (datos.sedeId !== undefined) {
+    if (typeof datos.sedeId !== 'string' || datos.sedeId.trim().length === 0) {
+      throw new DispatchError(400, 'La sede no es válida.');
+    }
+    sedeId = datos.sedeId.trim();
+  }
+
   return {
     tipo,
     fechaPrevista,
     motivo,
     reservaIds: Array.from(conjuntoUnico),
+    ...(claveConfirmacion !== undefined ? { claveConfirmacion } : {}),
+    ...(sedeId !== undefined ? { sedeId } : {}),
   };
 }
 
@@ -68,13 +131,14 @@ export function crearComprobanteDespacho(comandoValido, opciones = {}) {
   const item = {
     id: opciones.id || randomUUID(),
     module: 'dispatches',
+    scopeId: opciones.scopeId || opciones.sedeId || 'sede-central',
+    sedeId: opciones.sedeId || opciones.scopeId || 'sede-central',
     tipo: comandoValido.tipo,
     fechaPrevista: comandoValido.fechaPrevista || undefined,
     motivo: comandoValido.motivo || undefined,
     reservaIds: comandoValido.reservaIds,
     pedidoId: opciones.pedidoId || 'PED-DEMO-001',
     hospitalId: opciones.hospitalId || 'HOSP-DEMO',
-    sedeId: opciones.sedeId || 'sede-central',
     responsableId: opciones.responsableId || 'nursing-demo',
     fechaRegistro: new Date(clock()).toISOString(),
   };
