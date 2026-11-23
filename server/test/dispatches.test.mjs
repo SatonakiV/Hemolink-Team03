@@ -322,3 +322,110 @@ test('UT10.2-B: Selección inválida solo invalida la reserva propia que perdió
   assert.equal(resultado.saldos.cantidadReservada, 0);
   assert.equal(resultado.saldos.pendienteEntregar, 2);
 });
+
+test('UT10.2-C: Misma clave y datos recuperan el resultado', async (t) => {
+  const store = new SqliteStore(':memory:');
+  t?.after?.(() => store.close());
+  seedDemoData(store, 'DemoHemoLink2026!');
+
+  store.update((db) => {
+    db.records.push(
+      {
+        id: 'PED-C1', module: 'requests', scopeId: 'hospital-demo', hospitalId: 'hospital-demo',
+        grupoAbo: 'O', factorRh: 'positivo', cantidadSolicitada: 2, cantidadDespachada: 0,
+        cantidadReservada: 2, pendienteAsignar: 0, pendienteEntregar: 2, estado: 'reservado',
+      },
+      { id: 'DON-C', module: 'donations', scopeId: 'sede-central' },
+      {
+        id: 'UNI-C1', module: 'inventory', scopeId: 'sede-central', codigo: 'U-C1', donacionId: 'DON-C',
+        grupoAbo: 'O', factorRh: 'positivo', estado: 'reservada', pedidoId: 'PED-C1', fechaVencimiento: '2026-12-10',
+      },
+    );
+  });
+
+  const datos = {
+    tipo: 'programado', fechaPrevista: '2026-11-30', reservaIds: ['UNI-C1'],
+    claveConfirmacion: 'clave-idemp-001',
+  };
+
+  const primerIntento = await confirmarDespacho({
+    store, user: USER_INV, pedidoId: 'PED-C1', hoy: HOY, ahora: AHORA, datos,
+  });
+  assert.equal(primerIntento.existente, false);
+  assert.equal(primerIntento.item.cantidad, 1);
+
+  // Reintento idéntico recupera el comprobante original
+  const segundoIntento = await confirmarDespacho({
+    store, user: USER_INV, pedidoId: 'PED-C1', hoy: HOY, ahora: AHORA, datos,
+  });
+  assert.equal(segundoIntento.existente, true);
+  assert.equal(segundoIntento.item.id, primerIntento.item.id);
+  assert.equal(segundoIntento.item.fechaRegistro, primerIntento.item.fechaRegistro);
+
+  // Comprueba que no se duplicaron comprobantes ni despacho en saldos
+  const db = store.read();
+  const despachos = db.records.filter((r) => r.module === 'dispatches');
+  assert.equal(despachos.length, 1);
+  const pedido = db.records.find((r) => r.id === 'PED-C1');
+  assert.equal(pedido.cantidadDespachada, 1);
+});
+
+test('UT10.2-D: Misma clave con otros datos produce conflicto', async (t) => {
+  const store = new SqliteStore(':memory:');
+  t?.after?.(() => store.close());
+  seedDemoData(store, 'DemoHemoLink2026!');
+
+  store.update((db) => {
+    db.records.push(
+      {
+        id: 'PED-D1', module: 'requests', scopeId: 'hospital-demo', hospitalId: 'hospital-demo',
+        grupoAbo: 'O', factorRh: 'positivo', cantidadSolicitada: 3, cantidadDespachada: 0,
+        cantidadReservada: 2, pendienteAsignar: 1, pendienteEntregar: 3, estado: 'parcial',
+      },
+      { id: 'DON-D', module: 'donations', scopeId: 'sede-central' },
+      {
+        id: 'UNI-D1', module: 'inventory', scopeId: 'sede-central', codigo: 'U-D1', donacionId: 'DON-D',
+        grupoAbo: 'O', factorRh: 'positivo', estado: 'reservada', pedidoId: 'PED-D1', fechaVencimiento: '2026-12-10',
+      },
+      {
+        id: 'UNI-D2', module: 'inventory', scopeId: 'sede-central', codigo: 'U-D2', donacionId: 'DON-D',
+        grupoAbo: 'O', factorRh: 'positivo', estado: 'reservada', pedidoId: 'PED-D1', fechaVencimiento: '2026-12-10',
+      },
+    );
+  });
+
+  const datosOriginales = {
+    tipo: 'urgente', motivo: 'Cirugía inicial', reservaIds: ['UNI-D1'],
+    claveConfirmacion: 'clave-idemp-002',
+  };
+
+  const primerIntento = await confirmarDespacho({
+    store, user: USER_INV, pedidoId: 'PED-D1', hoy: HOY, ahora: AHORA, datos: datosOriginales,
+  });
+  assert.equal(primerIntento.existente, false);
+
+  // Misma clave con otro motivo produce conflicto 409
+  await assert.rejects(
+    () => confirmarDespacho({
+      store, user: USER_INV, pedidoId: 'PED-D1', hoy: HOY, ahora: AHORA,
+      datos: { ...datosOriginales, motivo: 'Otro motivo diferente' },
+    }),
+    (err) => err instanceof DispatchError && err.status === 409 && err.message.includes('otros datos')
+  );
+
+  // Misma clave con otra selección de reservas produce conflicto 409
+  await assert.rejects(
+    () => confirmarDespacho({
+      store, user: USER_INV, pedidoId: 'PED-D1', hoy: HOY, ahora: AHORA,
+      datos: { ...datosOriginales, reservaIds: ['UNI-D2'] },
+    }),
+    (err) => err instanceof DispatchError && err.status === 409 && err.message.includes('otros datos')
+  );
+
+  // La base conserva únicamente el despacho original y la unidad D2 sigue reservada
+  const db = store.read();
+  const despachos = db.records.filter((r) => r.module === 'dispatches');
+  assert.equal(despachos.length, 1);
+  const u2 = db.records.find((r) => r.id === 'UNI-D2');
+  assert.equal(u2.estado, 'reservada');
+});
