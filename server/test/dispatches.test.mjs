@@ -4,7 +4,10 @@ import {
   DispatchError,
   validarComandoDespacho,
   crearComprobanteDespacho,
+  confirmarDespacho,
 } from '../src/dispatches.mjs';
+import { SqliteStore } from '../src/sqlite-store.mjs';
+import { seedDemoData } from '../src/auth.mjs';
 
 test('UT10.1-A: programado acepta fecha civil válida', () => {
   const comandoValido = validarComandoDespacho({
@@ -118,4 +121,121 @@ test('UT10.1-C: selección vacía o con IDs repetidos se rechaza', () => {
     unidades: ['RES-010', 'RES-011'],
   });
   assert.deepEqual(comandoConUnidades.reservaIds, ['RES-010', 'RES-011']);
+});
+
+const HOY = '2026-11-22';
+const AHORA = '2026-11-22T12:00:00.000Z';
+const USER_INV = { id: 'inventory-demo', role: 'inventory', siteId: 'sede-central' };
+
+function crearBasePruebas(t) {
+  const store = new SqliteStore(':memory:');
+  t?.after?.(() => store.close());
+  seedDemoData(store, 'DemoHemoLink2026!');
+  store.update((db) => {
+    db.records.push(
+      {
+        id: 'PED-01', module: 'requests', scopeId: 'hospital-demo', hospitalId: 'hospital-demo',
+        grupoAbo: 'O', factorRh: 'positivo', cantidadSolicitada: 3, cantidadDespachada: 0,
+        cantidadReservada: 2, pendienteAsignar: 1, pendienteEntregar: 3, estado: 'parcial',
+      },
+      { id: 'DON-01', module: 'donations', scopeId: 'sede-central' },
+      { id: 'DON-NORTE', module: 'donations', scopeId: 'sede-norte' },
+      {
+        id: 'UNI-OK1', module: 'inventory', scopeId: 'sede-central', codigo: 'U-OK1', donacionId: 'DON-01',
+        grupoAbo: 'O', factorRh: 'positivo', estado: 'reservada', pedidoId: 'PED-01', fechaVencimiento: '2026-12-01',
+      },
+      {
+        id: 'UNI-OK2', module: 'inventory', scopeId: 'sede-central', codigo: 'U-OK2', donacionId: 'DON-01',
+        grupoAbo: 'O', factorRh: 'positivo', estado: 'reservada', pedidoId: 'PED-01', fechaVencimiento: '2026-12-05',
+      },
+      {
+        id: 'UNI-NORTE', module: 'inventory', scopeId: 'sede-norte', codigo: 'U-NORTE', donacionId: 'DON-NORTE',
+        grupoAbo: 'O', factorRh: 'positivo', estado: 'reservada', pedidoId: 'PED-01', fechaVencimiento: '2026-12-01',
+      },
+      {
+        id: 'UNI-GRUPO', module: 'inventory', scopeId: 'sede-central', codigo: 'U-GRP', donacionId: 'DON-01',
+        grupoAbo: 'A', factorRh: 'positivo', estado: 'reservada', pedidoId: 'PED-01', fechaVencimiento: '2026-12-01',
+      },
+      {
+        id: 'UNI-DISP', module: 'inventory', scopeId: 'sede-central', codigo: 'U-DISP', donacionId: 'DON-01',
+        grupoAbo: 'O', factorRh: 'positivo', estado: 'disponible', fechaVencimiento: '2026-12-01',
+      },
+    );
+  });
+  return store;
+}
+
+test('UT10.2-A: Sede, grupo, pedido, fecha o estado inválidos rechazan la salida', async (t) => {
+  const store = crearBasePruebas(t);
+
+  // 1. Sede manipulada en datos (409)
+  await assert.rejects(
+    () => confirmarDespacho({
+      store, user: USER_INV, pedidoId: 'PED-01', hoy: HOY, ahora: AHORA,
+      datos: { tipo: 'urgente', motivo: 'Emergencia', reservaIds: ['UNI-OK1'], sedeId: 'sede-otra' },
+    }),
+    (err) => err instanceof DispatchError && err.status === 409
+  );
+
+  // 2. Unidad de sede ajena (409)
+  await assert.rejects(
+    () => confirmarDespacho({
+      store, user: USER_INV, pedidoId: 'PED-01', hoy: HOY, ahora: AHORA,
+      datos: { tipo: 'urgente', motivo: 'Emergencia', reservaIds: ['UNI-NORTE'] },
+    }),
+    (err) => err instanceof DispatchError && err.status === 409
+  );
+
+  // 3. Grupo ABO contradictorio con el pedido (400)
+  await assert.rejects(
+    () => confirmarDespacho({
+      store, user: USER_INV, pedidoId: 'PED-01', hoy: HOY, ahora: AHORA,
+      datos: { tipo: 'urgente', motivo: 'Emergencia', reservaIds: ['UNI-GRUPO'] },
+    }),
+    (err) => err instanceof DispatchError && err.status === 400
+  );
+
+  // 4. Pedido inexistente (404)
+  await assert.rejects(
+    () => confirmarDespacho({
+      store, user: USER_INV, pedidoId: 'PED-NO-EXISTE', hoy: HOY, ahora: AHORA,
+      datos: { tipo: 'urgente', motivo: 'Emergencia', reservaIds: ['UNI-OK1'] },
+    }),
+    (err) => err instanceof DispatchError && err.status === 404
+  );
+
+  // 5. Fecha prevista pasada en despacho programado (400)
+  await assert.rejects(
+    () => confirmarDespacho({
+      store, user: USER_INV, pedidoId: 'PED-01', hoy: HOY, ahora: AHORA,
+      datos: { tipo: 'programado', fechaPrevista: '2026-11-20', reservaIds: ['UNI-OK1'] },
+    }),
+    (err) => err instanceof DispatchError && err.status === 400
+  );
+
+  // 6. Estado inválido (disponible en vez de reservada) (400)
+  await assert.rejects(
+    () => confirmarDespacho({
+      store, user: USER_INV, pedidoId: 'PED-01', hoy: HOY, ahora: AHORA,
+      datos: { tipo: 'urgente', motivo: 'Emergencia', reservaIds: ['UNI-DISP'] },
+    }),
+    (err) => err instanceof DispatchError && err.status === 400
+  );
+
+  // 7. Rol ajeno a inventario (403)
+  await assert.rejects(
+    () => confirmarDespacho({
+      store, user: { id: 'hosp', role: 'hospital', siteId: 'sede-central' }, pedidoId: 'PED-01',
+      hoy: HOY, ahora: AHORA, datos: { tipo: 'urgente', motivo: 'Emergencia', reservaIds: ['UNI-OK1'] },
+    }),
+    (err) => err instanceof DispatchError && err.status === 403
+  );
+
+  // Verifica que ningún despacho fue creado ni el pedido alterado
+  const db = store.read();
+  const despachos = db.records.filter((r) => r.module === 'dispatches');
+  assert.equal(despachos.length, 0);
+  const pedido = db.records.find((r) => r.id === 'PED-01');
+  assert.equal(pedido.cantidadDespachada, 0);
+  assert.equal(pedido.estado, 'parcial');
 });
