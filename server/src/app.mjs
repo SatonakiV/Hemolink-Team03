@@ -11,6 +11,7 @@ import { donacionDeSede, registrarMuestra } from './samples.mjs';
 import { SolicitudError, validarSolicitud, ordenarBandeja, crearSolicitud, obtenerFichaSolicitud } from './requests.mjs';
 import { AtencionParcialError } from './partial-fulfillment.mjs';
 import { atenderPedidoParcial } from './partial-fulfillment-integration.mjs';
+import { DispatchError, confirmarDespacho } from './dispatches.mjs';
 import {
   matchesPassword, passwordHash, tokenHash, newToken,
   publicUser, isAuthorizedUser, roleModules, seedDemoData,
@@ -537,6 +538,39 @@ export function createApplication({
           }
         }
 
+        const rutaDespacho =
+          /^\/api\/requests\/([A-Za-z0-9_-]{1,64})\/dispatches$/.exec(path);
+
+        if (rutaDespacho) {
+          if (request.method !== 'POST') {
+            throw new ApiError(405, 'Operación no implementada.');
+          }
+
+          if (user.role !== 'inventory') {
+            throw new ApiError(403, 'Solo inventario puede confirmar despachos.');
+          }
+
+          const datos = await readBody(request);
+          try {
+            const resultado = await confirmarDespacho({
+              store,
+              user,
+              pedidoId: rutaDespacho[1],
+              datos,
+              hoy: fechaLocal(clock),
+              ahora: new Date(clock()).toISOString(),
+            });
+
+            send(resultado.existente ? 200 : 201, resultado);
+            return;
+          } catch (error) {
+            if (error instanceof DispatchError) {
+              throw new ApiError(error.status, error.message);
+            }
+            throw error;
+          }
+        }
+
         if (path === '/api/requests' && request.method === 'POST') {
           if (user.role !== 'hospital') {
             throw new ApiError(403, 'Solo el hospital puede ingresar solicitudes.');
@@ -575,6 +609,52 @@ export function createApplication({
           }
           const db = store.read();
           const item = obtenerFichaSolicitud(db, user, id, { hoy: fechaLocal(clock) });
+          send(200, { item });
+          return;
+        }
+
+        throw new ApiError(405, 'Operación no implementada.');
+      }
+
+      if (path === '/api/dispatches' || path.startsWith('/api/dispatches/')) {
+        const { user } = authenticate(request);
+        if (user.role !== 'inventory') {
+          throw new ApiError(403, 'Solo inventario puede gestionar despachos.');
+        }
+
+        if (path === '/api/dispatches' && request.method === 'POST') {
+          const datos = await readBody(request);
+          try {
+            const resultado = await confirmarDespacho({
+              store,
+              user,
+              pedidoId: datos.pedidoId,
+              datos,
+              hoy: fechaLocal(clock),
+              ahora: new Date(clock()).toISOString(),
+            });
+            send(resultado.existente ? 200 : 201, resultado);
+            return;
+          } catch (error) {
+            if (error instanceof DispatchError) {
+              throw new ApiError(error.status, error.message);
+            }
+            throw error;
+          }
+        }
+
+        if (request.method === 'GET') {
+          const db = store.read({ records: { module: 'dispatches', scopeId: user.siteId } });
+          if (path === '/api/dispatches') {
+            const items = db.records.filter(r => r.module === 'dispatches' && r.scopeId === user.siteId).reverse();
+            send(200, { items });
+            return;
+          }
+          const id = path.slice('/api/dispatches/'.length);
+          const item = ID_VALIDO.test(id)
+            ? db.records.find(r => r.module === 'dispatches' && r.scopeId === user.siteId && r.id === id)
+            : null;
+          if (!item) throw new ApiError(404, 'Despacho no encontrado.');
           send(200, { item });
           return;
         }
