@@ -1,5 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   DispatchError,
   validarComandoDespacho,
@@ -428,4 +431,96 @@ test('UT10.2-D: Misma clave con otros datos produce conflicto', async (t) => {
   assert.equal(despachos.length, 1);
   const u2 = db.records.find((r) => r.id === 'UNI-D2');
   assert.equal(u2.estado, 'reservada');
+});
+
+test('Integración: Fallo de escritura revierte cambios, y doble confirmación y reinicio conservan un único comprobante, incluso tras importar una base anterior', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'hemolink-disp-'));
+  const dbPath = join(dir, 'hemolink.sqlite');
+  let store = null;
+  let importedStore = null;
+
+  try {
+    store = new SqliteStore(dbPath);
+    seedDemoData(store, 'DemoHemoLink2026!');
+
+    store.update((db) => {
+      db.records.push(
+        {
+          id: 'PED-INT1', module: 'requests', scopeId: 'hospital-demo', hospitalId: 'hospital-demo',
+          grupoAbo: 'O', factorRh: 'positivo', cantidadSolicitada: 2, cantidadDespachada: 0,
+          cantidadReservada: 2, pendienteAsignar: 0, pendienteEntregar: 2, estado: 'reservado',
+        },
+        { id: 'DON-INT', module: 'donations', scopeId: 'sede-central' },
+        {
+          id: 'UNI-INT1', module: 'inventory', scopeId: 'sede-central', codigo: 'U-INT1', donacionId: 'DON-INT',
+          grupoAbo: 'O', factorRh: 'positivo', estado: 'reservada', pedidoId: 'PED-INT1', fechaVencimiento: '2026-12-15',
+        },
+        {
+          id: 'UNI-INT2', module: 'inventory', scopeId: 'sede-central', codigo: 'U-INT2', donacionId: 'DON-INT',
+          grupoAbo: 'O', factorRh: 'positivo', estado: 'reservada', pedidoId: 'PED-INT1', fechaVencimiento: '2026-12-15',
+        },
+      );
+    });
+
+    const clave = 'clave-int-001';
+    const datos = {
+      tipo: 'urgente', motivo: 'Urgencia integración', reservaIds: ['UNI-INT1'], claveConfirmacion: clave,
+    };
+
+    const originalUpdate = store.update.bind(store);
+    store.update = (callback) =>
+      originalUpdate((db) => {
+        callback(db);
+        throw new Error('Fallo simulado antes del commit');
+      });
+
+    await assert.rejects(
+      () => confirmarDespacho({ store, user: USER_INV, pedidoId: 'PED-INT1', hoy: HOY, ahora: AHORA, datos }),
+      (err) => err.message === 'Fallo simulado antes del commit'
+    );
+
+    store.update = originalUpdate;
+    let db = store.read();
+    assert.equal(db.records.filter((r) => r.module === 'dispatches').length, 0);
+    assert.equal(db.records.find((r) => r.id === 'UNI-INT1').estado, 'reservada');
+    assert.equal(db.records.find((r) => r.id === 'PED-INT1').cantidadDespachada, 0);
+
+    await Promise.all([
+      confirmarDespacho({ store, user: USER_INV, pedidoId: 'PED-INT1', hoy: HOY, ahora: AHORA, datos }),
+      confirmarDespacho({ store, user: USER_INV, pedidoId: 'PED-INT1', hoy: HOY, ahora: AHORA, datos }),
+    ]);
+
+    store.close();
+    store = new SqliteStore(dbPath);
+
+    db = store.read();
+    const despachos = db.records.filter((r) => r.module === 'dispatches' && r.claveConfirmacion === clave);
+    assert.equal(despachos.length, 1);
+    assert.equal(db.records.find((r) => r.id === 'UNI-INT1').estado, 'despachada');
+    assert.equal(db.records.find((r) => r.id === 'PED-INT1').cantidadDespachada, 1);
+
+    const jsonExportPath = join(dir, 'backup.json');
+    store.exportJsonTo(jsonExportPath);
+    store.close();
+    store = null;
+
+    const importedDbPath = join(dir, 'imported.sqlite');
+    importedStore = new SqliteStore(importedDbPath, { importJsonPath: jsonExportPath, requireNew: true });
+
+    const recuperado = await confirmarDespacho({
+      store: importedStore, user: USER_INV, pedidoId: 'PED-INT1', hoy: HOY, ahora: AHORA, datos,
+    });
+    assert.equal(recuperado.existente, true);
+    assert.equal(recuperado.item.id, despachos[0].id);
+
+    const dbImportada = importedStore.read();
+    const despachosImportados = dbImportada.records.filter(
+      (r) => r.module === 'dispatches' && r.claveConfirmacion === clave,
+    );
+    assert.equal(despachosImportados.length, 1);
+  } finally {
+    try { store?.close(); } catch {}
+    try { importedStore?.close(); } catch {}
+    try { rmSync(dir, { recursive: true, force: true }); } catch {}
+  }
 });
