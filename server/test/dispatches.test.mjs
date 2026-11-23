@@ -239,3 +239,86 @@ test('UT10.2-A: Sede, grupo, pedido, fecha o estado inválidos rechazan la salid
   assert.equal(pedido.cantidadDespachada, 0);
   assert.equal(pedido.estado, 'parcial');
 });
+
+test('UT10.2-B: Selección inválida solo invalida la reserva propia que perdió vigencia', async (t) => {
+  const store = new SqliteStore(':memory:');
+  t?.after?.(() => store.close());
+  seedDemoData(store, 'DemoHemoLink2026!');
+
+  store.update((db) => {
+    db.records.push(
+      {
+        id: 'PED-B1', module: 'requests', scopeId: 'hospital-demo', hospitalId: 'hospital-demo',
+        grupoAbo: 'O', factorRh: 'positivo', cantidadSolicitada: 3, cantidadDespachada: 0,
+        cantidadReservada: 2, pendienteAsignar: 1, pendienteEntregar: 3, estado: 'parcial',
+      },
+      {
+        id: 'PED-B2', module: 'requests', scopeId: 'hospital-demo', hospitalId: 'hospital-demo',
+        grupoAbo: 'O', factorRh: 'positivo', cantidadSolicitada: 1, cantidadDespachada: 0,
+        cantidadReservada: 1, pendienteAsignar: 0, pendienteEntregar: 1, estado: 'reservado',
+      },
+      { id: 'DON-B', module: 'donations', scopeId: 'sede-central' },
+      { id: 'DON-NORTE-B', module: 'donations', scopeId: 'sede-norte' },
+      {
+        id: 'UNI-VIG', module: 'inventory', scopeId: 'sede-central', codigo: 'U-VIG', donacionId: 'DON-B',
+        grupoAbo: 'O', factorRh: 'positivo', estado: 'reservada', pedidoId: 'PED-B1', fechaVencimiento: '2026-11-28',
+      },
+      {
+        id: 'UNI-VENC', module: 'inventory', scopeId: 'sede-central', codigo: 'U-VENC', donacionId: 'DON-B',
+        grupoAbo: 'O', factorRh: 'positivo', estado: 'reservada', pedidoId: 'PED-B1', fechaVencimiento: '2026-11-20',
+      },
+      {
+        id: 'UNI-OTRO-PED', module: 'inventory', scopeId: 'sede-central', codigo: 'U-OTRO', donacionId: 'DON-B',
+        grupoAbo: 'O', factorRh: 'positivo', estado: 'reservada', pedidoId: 'PED-B2', fechaVencimiento: '2026-11-20',
+      },
+      {
+        id: 'UNI-OTRA-SEDE', module: 'inventory', scopeId: 'sede-norte', codigo: 'U-OTRAS', donacionId: 'DON-NORTE-B',
+        grupoAbo: 'O', factorRh: 'positivo', estado: 'reservada', pedidoId: 'PED-B1', fechaVencimiento: '2026-11-20',
+      },
+    );
+  });
+
+  // Intento de despacho con una unidad vigente y una vencida seleccionada
+  await assert.rejects(
+    () => confirmarDespacho({
+      store, user: USER_INV, pedidoId: 'PED-B1', hoy: HOY, ahora: AHORA,
+      datos: { tipo: 'urgente', motivo: 'Cirugía', reservaIds: ['UNI-VIG', 'UNI-VENC'] },
+    }),
+    (err) => err instanceof DispatchError && err.status === 409
+  );
+
+  // Comprobar persistencia atómica de la invalidación exclusiva
+  const db = store.read();
+  const uVenc = db.records.find((r) => r.id === 'UNI-VENC');
+  assert.equal(uVenc.estado, 'vencida');
+  assert.equal(uVenc.usuarioModificacionId, USER_INV.id);
+  assert.equal(uVenc.fechaModificacion, AHORA);
+
+  // La reserva vigente propia permanece intacta
+  const uVig = db.records.find((r) => r.id === 'UNI-VIG');
+  assert.equal(uVig.estado, 'reservada');
+
+  // Las reservas de otros pedidos y sedes permanecen intactas
+  const uOtroPed = db.records.find((r) => r.id === 'UNI-OTRO-PED');
+  assert.equal(uOtroPed.estado, 'reservada');
+  const uOtraSede = db.records.find((r) => r.id === 'UNI-OTRA-SEDE');
+  assert.equal(uOtraSede.estado, 'reservada');
+
+  // Saldos del pedido recalculados tras persistir la invalidación
+  const pedido = db.records.find((r) => r.id === 'PED-B1');
+  assert.equal(pedido.cantidadReservada, 1);
+  assert.equal(pedido.pendienteAsignar, 2);
+  assert.equal(pedido.pendienteEntregar, 3);
+  assert.equal(pedido.cantidadDespachada, 0);
+
+  // Conflicto recuperable: despacho posterior de la reserva vigente procede
+  const resultado = await confirmarDespacho({
+    store, user: USER_INV, pedidoId: 'PED-B1', hoy: HOY, ahora: AHORA,
+    datos: { tipo: 'urgente', motivo: 'Cirugía', reservaIds: ['UNI-VIG'] },
+  });
+  assert.equal(resultado.item.tipo, 'urgente');
+  assert.equal(resultado.item.cantidad, 1);
+  assert.equal(resultado.saldos.cantidadDespachada, 1);
+  assert.equal(resultado.saldos.cantidadReservada, 0);
+  assert.equal(resultado.saldos.pendienteEntregar, 2);
+});
