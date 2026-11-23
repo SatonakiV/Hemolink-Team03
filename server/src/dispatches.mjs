@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { fechaValida } from './dates.mjs';
+import { calcularSaldosPedidoConReservas } from './order-balances.mjs';
 
 const CLAVE = /^[A-Za-z0-9_-]{1,64}$/;
 
@@ -143,4 +144,62 @@ export function crearComprobanteDespacho(comandoValido, opciones = {}) {
     fechaRegistro: new Date(clock()).toISOString(),
   };
   return item;
+}
+
+export function validarUnidadesDespacho(db, user, pedido, reservaIds) {
+  const seleccionadas = [];
+  for (const id of reservaIds) {
+    let unidad = db.records.find((r) => r.module === 'inventory' && r.id === id);
+    let reserva = null;
+
+    if (!unidad) {
+      reserva = db.records.find((r) => (r.module === 'reservations' || r.module === 'inventory') && r.id === id);
+      if (reserva?.unidadId) {
+        unidad = db.records.find((r) => r.module === 'inventory' && r.id === reserva.unidadId);
+      }
+    } else {
+      reserva = db.records.find((r) => r.module === 'reservations' && (r.id === id || r.unidadId === id));
+    }
+
+    if (!unidad) throw new DispatchError(400, `La reserva o unidad ${id} no existe.`);
+    if (unidad.scopeId !== user.siteId) throw new DispatchError(409, `La unidad ${unidad.id} pertenece a otra sede.`);
+    if (unidad.pedidoId !== pedido.id && (!reserva || reserva.pedidoId !== pedido.id)) {
+      throw new DispatchError(400, `La unidad ${unidad.id} no está reservada para este pedido.`);
+    }
+    if (unidad.estado !== 'reservada') throw new DispatchError(400, `La unidad ${unidad.id} no está en estado reservada.`);
+    if (unidad.grupoAbo !== pedido.grupoAbo || unidad.factorRh !== pedido.factorRh) {
+      throw new DispatchError(400, `El grupo sanguíneo de la unidad ${unidad.id} no coincide con el pedido.`);
+    }
+    seleccionadas.push({ unidad, reserva });
+  }
+  return seleccionadas;
+}
+
+export function invalidarReservasVencidas(db, user, pedido, vencidas, hoy, ahora) {
+  for (const { unidad, reserva } of vencidas) {
+    unidad.estado = 'vencida';
+    unidad.usuarioModificacionId = user.id;
+    unidad.fechaModificacion = ahora;
+    if (reserva) {
+      reserva.estado = 'vencida';
+      reserva.usuarioModificacionId = user.id;
+      reserva.fechaModificacion = ahora;
+    }
+  }
+  const reservasRestantes = db.records.filter(
+    (r) =>
+      (r.module === 'reservations' || (r.module === 'inventory' && r.estado === 'reservada')) &&
+      r.pedidoId === pedido.id,
+  );
+  const saldos = calcularSaldosPedidoConReservas({
+    cantidadSolicitada: pedido.cantidadSolicitada,
+    cantidadDespachada: pedido.cantidadDespachada ?? 0,
+    reservas: reservasRestantes,
+    hoy,
+  });
+  Object.assign(pedido, saldos, {
+    usuarioModificacionId: user.id,
+    fechaModificacion: ahora,
+  });
+  return vencidas.map(({ unidad }) => unidad.id);
 }
