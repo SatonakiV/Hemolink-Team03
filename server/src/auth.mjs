@@ -35,6 +35,13 @@ export function isAuthorizedUser(user) {
     : typeof user.siteId === 'string' && user.siteId.length > 0 && user.hospitalId === null;
 }
 
+export function activeSession(db, sessionTokenHash, now) {
+  const session = db.sessions.find(item => item.tokenHash === sessionTokenHash);
+  if (!session || session.expiresAt <= now) return null;
+  const user = db.users.find(item => item.id === session.userId);
+  return isAuthorizedUser(user) ? { user, session } : null;
+}
+
 export function seedDemoData(store, password) {
   const accounts = [
     ['nursing-demo', 'enfermeria@hemolink.test', 'nursing', true],

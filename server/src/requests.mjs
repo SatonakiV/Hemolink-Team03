@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { GRUPOS_ABO, FACTORES_RH } from './blood-groups.mjs';
-import { calcularSaldosPedido, calcularSaldosPedidoConReservas } from './order-balances.mjs';
+import { calcularSaldosPedido, calcularSaldosPedidoActuales } from './order-balances.mjs';
 
 export class SolicitudError extends Error {
   constructor(status, message, errors) {
@@ -139,12 +139,7 @@ export function obtenerFichaSolicitud(db, user, id, { hoy } = {}) {
 
   if (hoy && typeof pedido.cantidadSolicitada === 'number') {
     try {
-      saldos = calcularSaldosPedidoConReservas({
-        cantidadSolicitada: pedido.cantidadSolicitada,
-        cantidadDespachada: saldos.cantidadDespachada,
-        reservas,
-        hoy,
-      });
+      saldos = calcularSaldosPedidoActuales(db, pedido, hoy);
     } catch {
       // Usar saldos actuales si no se pueden recalcular
     }

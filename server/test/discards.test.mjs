@@ -110,6 +110,9 @@ test('UT07.1-A: unidad válida guarda motivo, autor y fecha, conserva su donaci�
   assert.equal(encontrada.datos.item.id, 'DISP');
   assert.equal(encontrada.datos.item.estado, 'disponible');
   assert.equal(encontrada.datos.item.donanteId, undefined, 'no expone datos del donante');
+  const stockInicial = await f.solicitar('/api/inventory', { token: f.token });
+  assert.equal(stockInicial.estado, 200);
+  assert.ok(stockInicial.datos.items.some(u => u.id === 'DISP'));
   const r = await f.descartar('DISP', { motivo: '  Bolsa dañada  ' });
   assert.equal(r.estado, 200, JSON.stringify(r.datos));
   assert.equal(r.datos.repetido, false);
@@ -218,6 +221,41 @@ test('UT07.1-D: también libera una unidad marcada como reservada (forma de HU09
   assert.equal(r.datos.pedidos[0].pendienteAsignar, 2);
   assert.equal(r.datos.pedidos[0].estado, 'pendiente');
   assert.equal(f.registro('MARC').pedidoId, 'PED-2', 'conserva el vínculo como historial');
+});
+
+test('T07.1 y T09.2: descarte, ficha y atención parcial comparten el mismo saldo', async t => {
+  const f = await entorno(t);
+  f.store.update(db => {
+    const solicitud = db.records.find(r => r.id === 'PED-1');
+    solicitud.cantidadSolicitada = 4;
+    db.records.push(
+      unidad('RES3', { estado: 'reservada', pedidoId: 'PED-1' }),
+      reserva('R-4', 'RES3', 'PED-1'),
+    );
+  });
+  const pedir = (ruta, cuerpo) => f.solicitar(ruta, {
+    token: f.token, metodo: cuerpo ? 'POST' : 'GET', cuerpo,
+  });
+  const atender = unidadesPropuestas => pedir('/api/requests/PED-1/partial-fulfillment', {
+    decision: 'aceptar', unidadesPropuestas,
+  });
+
+  const descarte = await f.descartar('RES1');
+  assert.equal(descarte.estado, 200);
+  const ficha = await pedir('/api/requests/PED-1');
+  assert.equal(ficha.estado, 200);
+  for (const saldo of [descarte.datos.pedidos[0], ficha.datos.item]) {
+    assert.equal(saldo.cantidadReservada, 2);
+    assert.equal(saldo.pendienteAsignar, 1);
+  }
+
+  assert.equal((await atender(['DISP', 'NORTE'])).estado, 409);
+  const confirmacion = await atender(['DISP']);
+  assert.equal(confirmacion.estado, 200, JSON.stringify(confirmacion.datos));
+  assert.deepEqual(confirmacion.datos.reservaIds, ['DISP']);
+  assert.equal(confirmacion.datos.saldos.cantidadReservada, 3);
+  assert.equal(confirmacion.datos.saldos.pendienteAsignar, 0);
+  assert.equal(f.registro('NORTE').estado, 'disponible');
 });
 
 test('UT07.1-D: una reserva que ya no era válida (vencida) no cambia el saldo', async t => {

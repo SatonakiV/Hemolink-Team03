@@ -9,7 +9,7 @@ import { atomicSnapshot, GENESIS, publishFile, STORAGE_KEY } from './json-journa
 import { readJsonDatabase } from './json-import.mjs';
 
 const APPLICATION_ID = 0x48454d4f; // HEMO
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 const tables = ['users', 'sessions', 'records'];
 const fields = {
   users: { id: 'id', email: 'email' },
@@ -71,8 +71,21 @@ export class SqliteStore {
             }
             this.#write(empty(), data);
           }
-        } else if (version !== SCHEMA_VERSION || applicationId !== APPLICATION_ID) {
+        } else if (applicationId !== APPLICATION_ID || (version !== 1 && version !== SCHEMA_VERSION)) {
           throw new Error('Base SQLite ajena o versión no compatible. Conserve el archivo.');
+        } else if (version === 1) {
+          try {
+            this.#db.exec(`
+              CREATE UNIQUE INDEX IF NOT EXISTS dispatches_confirmation ON records(scope_id, confirmation)
+                WHERE module = 'dispatches' AND confirmation IS NOT NULL;
+              PRAGMA user_version = ${SCHEMA_VERSION};
+            `);
+          } catch (error) {
+            if (error.errcode !== 2067) throw error;
+            const constraint = new StoreConstraintError();
+            constraint.message = 'La base contiene claves de confirmación de despacho duplicadas en una sede. No se modificaron sus datos.';
+            throw constraint;
+          }
         }
       });
       this.#db.exec('PRAGMA journal_mode = WAL;');

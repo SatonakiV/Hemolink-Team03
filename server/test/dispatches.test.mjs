@@ -11,6 +11,7 @@ import {
 } from '../src/dispatches.mjs';
 import { SqliteStore } from '../src/sqlite-store.mjs';
 import { seedDemoData } from '../src/auth.mjs';
+import { createApplication } from '../src/app.mjs';
 
 test('UT10.1-A: programado acepta fecha civil válida', () => {
   const comandoValido = validarComandoDespacho({
@@ -243,6 +244,63 @@ test('UT10.2-A: Sede, grupo, pedido, fecha o estado inválidos rechazan la salid
   assert.equal(pedido.estado, 'parcial');
 });
 
+test('Despacho: resuelve el ID de la unidad y valida la reserva activa sin tocar el historial', async t => {
+  const store = new SqliteStore(':memory:');
+  t.after(() => store.close());
+  seedDemoData(store, 'DemoHemoLink2026!');
+  const pedidoId = 'PED-RESERVAS';
+  const pedidoAjeno = 'PED-AJENAS';
+  const solicitud = (id, cantidadSolicitada) => ({
+    id, module: 'requests', scopeId: 'hospital-demo', hospitalId: 'hospital-demo',
+    grupoAbo: 'O', factorRh: 'positivo', cantidadSolicitada, cantidadDespachada: 0,
+  });
+  const unidad = (id, cambios) => ({
+    id, module: 'inventory', scopeId: 'sede-central', pedidoId, estado: 'reservada',
+    grupoAbo: 'O', factorRh: 'positivo', fechaVencimiento: '2026-12-01', ...cambios,
+  });
+  const reserva = (id, unidadId, cambios) => ({
+    id, unidadId, module: 'reservations', scopeId: 'sede-central', pedidoId,
+    estado: 'reservada', ...cambios,
+  });
+  store.update(db => db.records.push(
+    solicitud(pedidoId, 2), solicitud(pedidoAjeno, 3),
+    unidad('U-ACTIVA'), unidad('U-RESTANTE'),
+    unidad('U-SIN-FECHA', { fechaVencimiento: null, pedidoId: pedidoAjeno }),
+    unidad('U-OTRA-SEDE', { pedidoId: pedidoAjeno }),
+    unidad('U-OTRO-PEDIDO', { pedidoId: pedidoAjeno }),
+    reserva('R-HISTORIAL', 'U-ACTIVA', { estado: 'vencida' }),
+    reserva('R-ACTIVA', 'U-ACTIVA'), reserva('R-RESTANTE', 'U-RESTANTE'),
+    reserva('R-OTRA-SEDE', 'U-OTRA-SEDE', { scopeId: 'sede-norte', pedidoId: pedidoAjeno }),
+    reserva('R-OTRO-PEDIDO', 'U-OTRO-PEDIDO'),
+  ));
+  const despachar = (reservaIds, id = pedidoId) => confirmarDespacho({
+    store, user: USER_INV, pedidoId: id, hoy: HOY, ahora: AHORA,
+    datos: { tipo: 'urgente', motivo: 'Cirugía', reservaIds },
+  });
+
+  const antes = store.read();
+  await assert.rejects(() => despachar(['U-ACTIVA', 'R-ACTIVA']), { status: 400 });
+  await assert.rejects(() => despachar(['R-OTRA-SEDE'], pedidoAjeno), { status: 409 });
+  await assert.rejects(() => despachar(['R-OTRO-PEDIDO'], pedidoAjeno), { status: 400 });
+  await assert.rejects(() => despachar(['R-HISTORIAL']), { status: 400 });
+  await assert.rejects(() => despachar(['U-SIN-FECHA'], pedidoAjeno), {
+    status: 400, message: /fecha de vencimiento inválida/,
+  });
+  assert.deepEqual(store.read(), antes);
+
+  const salida = await despachar(['U-ACTIVA']);
+  assert.deepEqual(salida.item.unidades, ['U-ACTIVA']);
+  assert.equal(salida.saldos.cantidadDespachada, 1);
+  assert.equal(salida.saldos.cantidadReservada, 1);
+  assert.equal(salida.saldos.pendienteAsignar, 0);
+  const registros = new Map(store.read().records.map(r => [r.id, r]));
+  assert.equal(registros.get('R-HISTORIAL').estado, 'vencida');
+  assert.equal(registros.get('R-HISTORIAL').despachoId, undefined);
+  assert.equal(registros.get('R-ACTIVA').despachoId, salida.item.id);
+  assert.equal(registros.get('R-ACTIVA').estado, 'cerrada');
+  assert.equal(registros.get('R-RESTANTE').estado, 'reservada');
+});
+
 test('UT10.2-B: Selección inválida solo invalida la reserva propia que perdió vigencia', async (t) => {
   const store = new SqliteStore(':memory:');
   t?.after?.(() => store.close());
@@ -271,6 +329,18 @@ test('UT10.2-B: Selección inválida solo invalida la reserva propia que perdió
         grupoAbo: 'O', factorRh: 'positivo', estado: 'reservada', pedidoId: 'PED-B1', fechaVencimiento: '2026-11-20',
       },
       {
+        id: 'UNI-LIBERAR', module: 'inventory', scopeId: 'sede-central', codigo: 'U-LIBERAR', donacionId: 'DON-B',
+        grupoAbo: 'O', factorRh: 'positivo', estado: 'reservada', pedidoId: 'PED-B1', fechaVencimiento: '2026-11-28',
+      },
+      {
+        id: 'RES-VIG', module: 'reservations', scopeId: 'sede-central', unidadId: 'UNI-VIG',
+        pedidoId: 'PED-B1', estado: 'reservada', fechaVencimiento: '2026-11-28',
+      },
+      {
+        id: 'RES-VENC', module: 'reservations', scopeId: 'sede-central', unidadId: 'UNI-LIBERAR',
+        pedidoId: 'PED-B1', estado: 'reservada', fechaVencimiento: HOY,
+      },
+      {
         id: 'UNI-OTRO-PED', module: 'inventory', scopeId: 'sede-central', codigo: 'U-OTRO', donacionId: 'DON-B',
         grupoAbo: 'O', factorRh: 'positivo', estado: 'reservada', pedidoId: 'PED-B2', fechaVencimiento: '2026-11-20',
       },
@@ -285,7 +355,7 @@ test('UT10.2-B: Selección inválida solo invalida la reserva propia que perdió
   await assert.rejects(
     () => confirmarDespacho({
       store, user: USER_INV, pedidoId: 'PED-B1', hoy: HOY, ahora: AHORA,
-      datos: { tipo: 'urgente', motivo: 'Cirugía', reservaIds: ['UNI-VIG', 'UNI-VENC'] },
+      datos: { tipo: 'urgente', motivo: 'Cirugía', reservaIds: ['UNI-VIG', 'UNI-VENC', 'RES-VENC'] },
     }),
     (err) => err instanceof DispatchError && err.status === 409
   );
@@ -296,6 +366,10 @@ test('UT10.2-B: Selección inválida solo invalida la reserva propia que perdió
   assert.equal(uVenc.estado, 'vencida');
   assert.equal(uVenc.usuarioModificacionId, USER_INV.id);
   assert.equal(uVenc.fechaModificacion, AHORA);
+  assert.equal(db.records.find(r => r.id === 'RES-VENC').estado, 'vencida');
+  assert.equal(db.records.find(r => r.id === 'UNI-LIBERAR').estado, 'disponible');
+  assert.equal(db.records.find(r => r.id === 'RES-VIG').estado, 'reservada');
+  assert.equal(db.records.filter(r => r.module === 'dispatches').length, 0);
 
   // La reserva vigente propia permanece intacta
   const uVig = db.records.find((r) => r.id === 'UNI-VIG');
@@ -357,9 +431,10 @@ test('UT10.2-C: Misma clave y datos recuperan el resultado', async (t) => {
   assert.equal(primerIntento.existente, false);
   assert.equal(primerIntento.item.cantidad, 1);
 
-  // Reintento idéntico recupera el comprobante original
+  // El reintento recupera el comprobante aunque la fecha prevista ya haya pasado.
   const segundoIntento = await confirmarDespacho({
-    store, user: USER_INV, pedidoId: 'PED-C1', hoy: HOY, ahora: AHORA, datos,
+    store, user: USER_INV, pedidoId: 'PED-C1', hoy: '2026-12-01', ahora: '2026-12-01T12:00:00.000Z',
+    datos: { ...datos, tipo: ' Programado ', fechaPrevista: ' 2026-11-30 ' },
   });
   assert.equal(segundoIntento.existente, true);
   assert.equal(segundoIntento.item.id, primerIntento.item.id);
@@ -371,6 +446,65 @@ test('UT10.2-C: Misma clave y datos recuperan el resultado', async (t) => {
   assert.equal(despachos.length, 1);
   const pedido = db.records.find((r) => r.id === 'PED-C1');
   assert.equal(pedido.cantidadDespachada, 1);
+});
+
+test('HTTP HU10: ambas rutas revalidan la sesión al confirmar dentro de la transacción', async t => {
+  const inicio = new Date(2026, 10, 22, 10).getTime();
+  let dentroDeTransaccion = false;
+  let expirarSesion = false;
+  let expiracion;
+  const { server, store } = createApplication({
+    databasePath: ':memory:', seedDemo: true,
+    clock: () => dentroDeTransaccion && expirarSesion ? expiracion : inicio,
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const pedidoId = 'PED-SESION';
+  store.update(db => db.records.push(
+    {
+      id: pedidoId, module: 'requests', scopeId: 'hospital-demo', hospitalId: 'hospital-demo',
+      grupoAbo: 'O', factorRh: 'positivo', cantidadSolicitada: 1, cantidadDespachada: 0,
+    },
+    {
+      id: 'U-SESION', module: 'inventory', scopeId: 'sede-central', pedidoId, estado: 'reservada',
+      grupoAbo: 'O', factorRh: 'positivo', fechaVencimiento: '2026-12-10',
+    },
+  ));
+  const enviar = (ruta, datos, token) => fetch(`http://127.0.0.1:${server.address().port}${ruta}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token && { Authorization: `Bearer ${token}` }),
+    },
+    body: JSON.stringify(datos),
+  });
+  const login = await enviar('/api/login', {
+    email: 'inventario@hemolink.test', password: 'DemoHemoLink2026!',
+  });
+  assert.equal(login.status, 200);
+  const { token, expiresAt } = await login.json();
+  expiracion = expiresAt;
+  const update = store.update.bind(store);
+  store.update = escribir => update(db => {
+    dentroDeTransaccion = true;
+    try { return escribir(db); }
+    finally { dentroDeTransaccion = false; }
+  });
+
+  const datos = { pedidoId, tipo: 'urgente', motivo: 'Cirugía', reservaIds: ['U-SESION'] };
+  const rutaPedido = `/api/requests/${pedidoId}/dispatches`;
+  const antes = store.read();
+  expirarSesion = true;
+  for (const ruta of [rutaPedido, '/api/dispatches']) {
+    const respuesta = await enviar(ruta, datos, token);
+    assert.equal(respuesta.status, 401, ruta);
+    await respuesta.json();
+    assert.deepEqual(store.read(), antes);
+  }
+  expirarSesion = false;
+  const aceptado = await enviar(rutaPedido, datos, token);
+  assert.equal(aceptado.status, 201);
+  assert.equal((await aceptado.json()).item.cantidad, 1);
 });
 
 test('UT10.2-D: Misma clave con otros datos produce conflicto', async (t) => {

@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
-import { fechaValida } from './dates.mjs';
-import { calcularSaldosPedidoConReservas } from './order-balances.mjs';
+import { activeSession } from './auth.mjs';
+import { fechaLocal, fechaValida } from './dates.mjs';
+import { calcularSaldosPedidoActuales, fechaLimiteReserva } from './order-balances.mjs';
 
 const CLAVE = /^[A-Za-z0-9_-]{1,64}$/;
 
@@ -8,6 +9,12 @@ export class DispatchError extends Error {
   constructor(status, message) {
     super(message);
     this.status = status;
+  }
+}
+
+function validarFechaPrevista(fechaPrevista, hoy) {
+  if (fechaPrevista && hoy && fechaPrevista < hoy) {
+    throw new DispatchError(400, 'La fecha prevista no puede ser anterior a la fecha actual.');
   }
 }
 
@@ -69,9 +76,7 @@ export function validarComandoDespacho(datos, hoy) {
     if (!fechaValida(rawFecha)) {
       throw new DispatchError(400, 'Ingresa una fecha prevista válida (AAAA-MM-DD).');
     }
-    if (hoy && rawFecha < hoy) {
-      throw new DispatchError(400, 'La fecha prevista no puede ser anterior a la fecha actual.');
-    }
+    validarFechaPrevista(rawFecha, hoy);
     fechaPrevista = rawFecha;
   } else if (tipo === 'urgente') {
     const rawMotivo = typeof datos.motivo === 'string' ? datos.motivo.trim() : '';
@@ -148,36 +153,52 @@ export function crearComprobanteDespacho(comandoValido, opciones = {}) {
 
 export function validarUnidadesDespacho(db, user, pedido, reservaIds) {
   const seleccionadas = [];
+  const unidadesSeleccionadas = new Set();
+  const unidades = new Map(db.records.filter(r => r.module === 'inventory').map(r => [r.id, r]));
+  const reservas = db.records.filter(r => r.module === 'reservations');
+
   for (const id of reservaIds) {
-    let unidad = db.records.find((r) => r.module === 'inventory' && r.id === id);
-    let reserva = null;
-
-    if (!unidad) {
-      reserva = db.records.find((r) => (r.module === 'reservations' || r.module === 'inventory') && r.id === id);
-      if (reserva?.unidadId) {
-        unidad = db.records.find((r) => r.module === 'inventory' && r.id === reserva.unidadId);
-      }
-    } else {
-      reserva = db.records.find((r) => r.module === 'reservations' && (r.id === id || r.unidadId === id));
-    }
-
+    const unidadDirecta = unidades.get(id);
+    const reservaExplicita = unidadDirecta ? undefined : reservas.find(r => r.id === id);
+    const unidad = unidadDirecta ?? unidades.get(reservaExplicita?.unidadId);
     if (!unidad) throw new DispatchError(400, `La reserva o unidad ${id} no existe.`);
     if (unidad.scopeId !== user.siteId) throw new DispatchError(409, `La unidad ${unidad.id} pertenece a otra sede.`);
-    if (unidad.pedidoId !== pedido.id && (!reserva || reserva.pedidoId !== pedido.id)) {
+
+    const activas = reservas.filter(r => r.unidadId === unidad.id && r.estado === 'reservada');
+    const reserva = reservaExplicita ?? activas[0];
+    if (reserva && reserva.scopeId !== user.siteId) {
+      throw new DispatchError(409, `La reserva ${reserva.id} pertenece a otra sede.`);
+    }
+    if (reserva && reserva.estado !== 'reservada') {
+      throw new DispatchError(400, `La reserva ${reserva.id} ya no está activa.`);
+    }
+    if (activas.length > 1) {
+      throw new DispatchError(409, `La unidad ${unidad.id} tiene más de una reserva activa.`);
+    }
+    const pedidoReserva = reserva ? reserva.pedidoId : unidad.pedidoId;
+    if (pedidoReserva !== pedido.id || (unidad.pedidoId != null && unidad.pedidoId !== pedido.id)) {
       throw new DispatchError(400, `La unidad ${unidad.id} no está reservada para este pedido.`);
     }
     if (unidad.estado !== 'reservada') throw new DispatchError(400, `La unidad ${unidad.id} no está en estado reservada.`);
     if (unidad.grupoAbo !== pedido.grupoAbo || unidad.factorRh !== pedido.factorRh) {
       throw new DispatchError(400, `El grupo sanguíneo de la unidad ${unidad.id} no coincide con el pedido.`);
     }
-    seleccionadas.push({ unidad, reserva });
+    if (unidadesSeleccionadas.has(unidad.id)) {
+      throw new DispatchError(400, `La unidad ${unidad.id} está repetida en la selección.`);
+    }
+    const fechaLimite = fechaLimiteReserva(unidad, reserva);
+    if (!fechaValida(fechaLimite)) {
+      throw new DispatchError(400, `La unidad ${unidad.id} o su reserva tiene una fecha de vencimiento inválida.`);
+    }
+    unidadesSeleccionadas.add(unidad.id);
+    seleccionadas.push({ unidad, reserva, fechaLimite });
   }
   return seleccionadas;
 }
 
 export function invalidarReservasVencidas(db, user, pedido, vencidas, hoy, ahora) {
   for (const { unidad, reserva } of vencidas) {
-    unidad.estado = 'vencida';
+    unidad.estado = hoy >= unidad.fechaVencimiento ? 'vencida' : 'disponible';
     unidad.usuarioModificacionId = user.id;
     unidad.fechaModificacion = ahora;
     if (reserva) {
@@ -186,17 +207,7 @@ export function invalidarReservasVencidas(db, user, pedido, vencidas, hoy, ahora
       reserva.fechaModificacion = ahora;
     }
   }
-  const reservasRestantes = db.records.filter(
-    (r) =>
-      (r.module === 'reservations' || (r.module === 'inventory' && r.estado === 'reservada')) &&
-      r.pedidoId === pedido.id,
-  );
-  const saldos = calcularSaldosPedidoConReservas({
-    cantidadSolicitada: pedido.cantidadSolicitada,
-    cantidadDespachada: pedido.cantidadDespachada ?? 0,
-    reservas: reservasRestantes,
-    hoy,
-  });
+  const saldos = calcularSaldosPedidoActuales(db, pedido, hoy);
   Object.assign(pedido, saldos, {
     usuarioModificacionId: user.id,
     fechaModificacion: ahora,
@@ -220,17 +231,7 @@ export function registrarSalidaDespacho(db, user, pedido, comando, seleccionadas
   }
 
   pedido.cantidadDespachada = (pedido.cantidadDespachada ?? 0) + seleccionadas.length;
-  const reservasRestantes = db.records.filter(
-    (r) =>
-      (r.module === 'reservations' || (r.module === 'inventory' && r.estado === 'reservada')) &&
-      r.pedidoId === pedido.id,
-  );
-  const saldos = calcularSaldosPedidoConReservas({
-    cantidadSolicitada: pedido.cantidadSolicitada,
-    cantidadDespachada: pedido.cantidadDespachada,
-    reservas: reservasRestantes,
-    hoy,
-  });
+  const saldos = calcularSaldosPedidoActuales(db, pedido, hoy);
   Object.assign(pedido, saldos, {
     usuarioModificacionId: user.id,
     fechaModificacion: ahora,
@@ -261,7 +262,9 @@ export function registrarSalidaDespacho(db, user, pedido, comando, seleccionadas
 
 export async function confirmarDespacho({
   store,
-  user,
+  user: usuarioInterno,
+  sessionTokenHash,
+  clock = Date.now,
   pedidoId,
   datos,
   hoy,
@@ -271,21 +274,28 @@ export async function confirmarDespacho({
     throw new TypeError('Se requiere un almacén con el método update.');
   }
 
-  const fechaHoy = hoy || new Date().toISOString().slice(0, 10);
-  const fechaAhora = ahora || new Date().toISOString();
   let resultadoFinal;
   let invalidacionVencidas;
 
   await store.update((db) => {
+    const instante = clock();
+    const fechaHoy = hoy || fechaLocal(() => instante);
+    const fechaAhora = ahora || new Date(instante).toISOString();
+    let user = usuarioInterno;
+    if (sessionTokenHash !== undefined) {
+      const sesion = activeSession(db, sessionTokenHash, instante);
+      if (!sesion) throw new DispatchError(401, 'La sesión no es válida. Inicia sesión nuevamente.');
+      user = sesion.user;
+    }
     if (!user || typeof user !== 'object' || !user.id || user.role !== 'inventory' || !user.siteId) {
       throw new DispatchError(403, 'Solo personal de inventario autorizado puede despachar unidades.');
     }
 
-    if (datos?.sedeId !== undefined && datos.sedeId !== user.siteId) {
+    const comando = validarComandoDespacho(datos);
+    if (comando.sedeId !== undefined && comando.sedeId !== user.siteId) {
       throw new DispatchError(409, 'La sede indicada no coincide con la de tu cuenta.');
     }
 
-    const comando = validarComandoDespacho(datos, fechaHoy);
     const idPedido = pedidoId || datos?.pedidoId;
     if (!idPedido || typeof idPedido !== 'string') {
       throw new DispatchError(400, 'Identificador de pedido inválido.');
@@ -302,8 +312,9 @@ export async function confirmarDespacho({
       return;
     }
 
+    validarFechaPrevista(comando.fechaPrevista, fechaHoy);
     const seleccionadas = validarUnidadesDespacho(db, user, pedido, comando.reservaIds);
-    const vencidas = seleccionadas.filter(({ unidad }) => fechaHoy >= unidad.fechaVencimiento);
+    const vencidas = seleccionadas.filter(({ fechaLimite }) => fechaHoy >= fechaLimite);
 
     if (vencidas.length > 0) {
       invalidacionVencidas = invalidarReservasVencidas(db, user, pedido, vencidas, fechaHoy, fechaAhora);
