@@ -1,4 +1,4 @@
-import { calcularSaldosPedidoConReservas } from './order-balances.mjs';
+import { calcularSaldosPedidoActuales } from './order-balances.mjs';
 
 /**
  * HU07 / T07.1: búsqueda por código y descarte de unidades.
@@ -100,30 +100,6 @@ export function buscarUnidadPorCodigo(db, user, codigo) {
   return proyectarUnidad(db, unidad);
 }
 
-/** Saldos del pedido contando una sola vez cada unidad con reserva activa. */
-function recalcularSaldos(db, pedido, hoy) {
-  const vencimientos = new Map();
-  for (const registro of db.records) {
-    if (registro.module === 'reservations' &&
-        registro.pedidoId === pedido.id && registro.estado === 'reservada') {
-      const unidad = db.records.find(r => r.module === 'inventory' && r.id === registro.unidadId);
-      vencimientos.set(registro.unidadId,
-        unidad?.fechaVencimiento ?? registro.fechaVencimiento);
-    } else if (registro.module === 'inventory' &&
-        registro.pedidoId === pedido.id && registro.estado === 'reservada') {
-      vencimientos.set(registro.id, registro.fechaVencimiento);
-    }
-  }
-  return calcularSaldosPedidoConReservas({
-    cantidadSolicitada: pedido.cantidadSolicitada,
-    cantidadDespachada: pedido.cantidadDespachada ?? 0,
-    reservas: [...vencimientos.values()].map(fechaVencimiento => ({
-      estado: 'reservada', fechaVencimiento,
-    })),
-    hoy,
-  });
-}
-
 /**
  * Descarta una unidad de la sede del usuario. Repetir el descarte devuelve el
  * primer registro sin modificar nada (CA2).
@@ -191,7 +167,7 @@ export function descartarUnidad(db, user, unidadId, motivo, { hoy, ahora }) {
   for (const pedidoId of new Set(reservas.map(r => r.pedidoId))) {
     const pedido = db.records.find(r => r.module === 'requests' && r.id === pedidoId);
     if (!pedido) continue;
-    const saldos = recalcularSaldos(db, pedido, hoy);
+    const saldos = calcularSaldosPedidoActuales(db, pedido, hoy);
     Object.assign(pedido, saldos, { usuarioModificacionId: user.id, fechaModificacion: ahora });
     pedidos.push({ id: pedido.id, ...saldos });
   }

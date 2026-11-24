@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 
 import { fechaValida } from './dates.mjs';
 import { unidadElegible } from './inventory.mjs';
-import { calcularSaldosPedidoConReservas } from './order-balances.mjs';
+import { calcularSaldosPedidoActuales } from './order-balances.mjs';
 import { SolicitudError } from './requests.mjs';
 import { AtencionParcialError } from './partial-fulfillment.mjs';
 import { confirmarAtencionParcial } from './partial-fulfillment-transaction.mjs';
@@ -37,29 +37,6 @@ function obtenerPedido(db, pedidoId) {
   }
 
   return pedido;
-}
-
-/**
- * Calcula saldos usando las unidades reservadas
- * que pertenecen al pedido.
- *
- * Las unidades vencidas no cuentan como reservas
- * validas, conforme a la regla de HU09.
- */
-function obtenerSaldosActuales(db, pedido, hoy) {
-  const reservas = db.records.filter(
-    item =>
-      item.module === 'inventory' &&
-      item.pedidoId === pedido.id &&
-      item.estado === 'reservada',
-  );
-
-  return calcularSaldosPedidoConReservas({
-    cantidadSolicitada: pedido.cantidadSolicitada,
-    cantidadDespachada: pedido.cantidadDespachada ?? 0,
-    reservas,
-    hoy,
-  });
 }
 
 /**
@@ -179,7 +156,7 @@ export async function atenderPedidoParcial({
     obtenerEstado(db, id) {
       const pedido = obtenerPedido(db, id);
 
-      const saldos = obtenerSaldosActuales(
+      const saldos = calcularSaldosPedidoActuales(
         db,
         pedido,
         hoy,
@@ -262,7 +239,7 @@ export async function atenderPedidoParcial({
       );
 
       // Recalcular despues de registrar las reservas.
-      const saldos = obtenerSaldosActuales(
+      const saldos = calcularSaldosPedidoActuales(
         db,
         pedido,
         hoy,

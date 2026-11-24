@@ -55,3 +55,49 @@ export function calcularSaldosPedidoConReservas({ cantidadSolicitada, cantidadDe
 
   return calcularSaldosPedido({ cantidadSolicitada, cantidadDespachada, cantidadReservada });
 }
+
+// Las reservas antiguas pueden omitir su fecha y usar el vencimiento de la unidad.
+export function fechaLimiteReserva(unidad, reserva) {
+  const fechaUnidad = unidad?.fechaVencimiento;
+  const fechaReserva = reserva?.fechaVencimiento;
+  if (unidad && !fechaValida(fechaUnidad)) return null;
+  if (fechaReserva === undefined) return fechaUnidad ?? null;
+  if (!fechaValida(fechaReserva)) return null;
+  return fechaUnidad && fechaUnidad < fechaReserva ? fechaUnidad : fechaReserva;
+}
+
+export function calcularSaldosPedidoActuales(db, pedido, hoy) {
+  const unidades = new Map();
+  const vencimientos = new Map();
+  for (const registro of db.records) {
+    if (registro.module !== 'inventory') continue;
+    unidades.set(registro.id, registro);
+    if (registro.estado === 'reservada' && registro.pedidoId === pedido.id) {
+      vencimientos.set(registro.id, fechaLimiteReserva(registro));
+    }
+  }
+
+  for (const reserva of db.records) {
+    if (reserva.module !== 'reservations' || reserva.estado !== 'reservada' ||
+        reserva.pedidoId !== pedido.id) continue;
+    const unidad = unidades.get(reserva.unidadId);
+    if (unidad && (unidad.estado !== 'reservada' || unidad.scopeId !== reserva.scopeId ||
+        (unidad.pedidoId != null && unidad.pedidoId !== pedido.id))) continue;
+
+    const unidadId = reserva.unidadId ?? reserva.id;
+    const fecha = fechaLimiteReserva(unidad, reserva);
+    const anterior = vencimientos.get(unidadId);
+    if (anterior === undefined || fecha === null || (anterior !== null && fecha < anterior)) {
+      vencimientos.set(unidadId, fecha);
+    }
+  }
+
+  return calcularSaldosPedidoConReservas({
+    cantidadSolicitada: pedido.cantidadSolicitada,
+    cantidadDespachada: pedido.cantidadDespachada ?? 0,
+    reservas: Array.from(vencimientos.values(), fechaVencimiento => ({
+      estado: 'reservada', fechaVencimiento,
+    })),
+    hoy,
+  });
+}
