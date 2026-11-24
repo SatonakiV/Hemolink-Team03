@@ -96,3 +96,5 @@ CREATE UNIQUE INDEX inventory_code ON records(upper(trim(code))) WHERE module = 
 CREATE UNIQUE INDEX samples_code ON records(upper(trim(code))) WHERE module = 'samples' AND code IS NOT NULL;
 CREATE UNIQUE INDEX donations_confirmation ON records(scope_id, confirmation)
   WHERE module = 'donations' AND confirmation IS NOT NULL;
+CREATE UNIQUE INDEX dispatches_confirmation ON records(scope_id, confirmation)
+  WHERE module = 'dispatches' AND confirmation IS NOT NULL;
