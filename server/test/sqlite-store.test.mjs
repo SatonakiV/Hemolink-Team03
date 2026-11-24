@@ -242,6 +242,54 @@ test('SQLite: las restricciones también rechazan SQL directo con payload incons
   assert.equal(store.verify().ok, true);
 });
 
+test('SQLite: migra una base v1 y exige claves de despacho únicas por sede', t => {
+  const { path, store, open } = fixture(t);
+  const despacho = (id, scopeId = 'sede-central') => ({
+    id, module: 'dispatches', scopeId, claveConfirmacion: 'clave-v1',
+  });
+  store.update(db => db.records.push(despacho('original')));
+  store.close();
+
+  const anterior = new DatabaseSync(path);
+  anterior.exec('DROP INDEX dispatches_confirmation; PRAGMA user_version = 1;');
+  anterior.close();
+
+  const migrado = open(path);
+  assert.deepEqual(migrado.read().records, [despacho('original')]);
+  assert.throws(() => migrado.update(db => db.records.push(despacho('duplicado'))),
+    { status: 409 });
+  migrado.update(db => db.records.push(despacho('otra-sede', 'sede-norte')));
+
+  const inspeccion = new DatabaseSync(path);
+  try {
+    assert.equal(inspeccion.prepare('PRAGMA user_version').get().user_version, 2);
+    assert.deepEqual(open(path).read().records, [despacho('original'), despacho('otra-sede', 'sede-norte')]);
+  } finally {
+    inspeccion.close();
+  }
+});
+
+test('SQLite: si la migración encuentra claves duplicadas conserva los datos y la versión anterior', t => {
+  const { path, store } = fixture(t);
+  store.close();
+  const anterior = new DatabaseSync(path);
+  try {
+    anterior.exec('DROP INDEX dispatches_confirmation; PRAGMA user_version = 1;');
+    const agregar = anterior.prepare('INSERT INTO records(module, id, position, payload) VALUES (?, ?, ?, ?)');
+    for (const [position, id] of ['original', 'duplicado'].entries()) {
+      agregar.run('dispatches', id, position, JSON.stringify({
+        id, module: 'dispatches', scopeId: 'sede-central', claveConfirmacion: 'clave-repetida',
+      }));
+    }
+
+    assert.throws(() => new SqliteStore(path), /claves de confirmación de despacho duplicadas/);
+    assert.equal(anterior.prepare('PRAGMA user_version').get().user_version, 1);
+    assert.equal(anterior.prepare('SELECT count(*) AS total FROM records').get().total, 2);
+  } finally {
+    anterior.close();
+  }
+});
+
 test('SQLite: cuatro procesos escriben sin pérdidas incluso con checkpoints', { timeout: 20000 }, async t => {
   const { store, path } = fixture(t);
   const children = Array.from({ length: 4 }, (_, index) => worker(`
