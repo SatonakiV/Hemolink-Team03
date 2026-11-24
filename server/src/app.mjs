@@ -12,10 +12,10 @@ import {DescarteError, validarMotivo, buscarUnidadPorCodigo, descartarUnidad} fr
 import { SolicitudError, validarSolicitud, ordenarBandeja, crearSolicitud, obtenerFichaSolicitud } from './requests.mjs';
 import { AtencionParcialError } from './partial-fulfillment.mjs';
 import { atenderPedidoParcial } from './partial-fulfillment-integration.mjs';
-import { DispatchError, confirmarDespacho } from './dispatches.mjs';
+import { confirmarDespacho } from './dispatches.mjs';
 import {
   matchesPassword, passwordHash, tokenHash, newToken,
-  publicUser, isAuthorizedUser, roleModules, seedDemoData,
+  publicUser, isAuthorizedUser, activeSession, roleModules, seedDemoData,
 } from './auth.mjs';
 
 const ID_VALIDO = /^[A-Za-z0-9_-]{1,64}$/;
@@ -107,16 +107,13 @@ export function createApplication({
       request.headers.authorization ?? '',
     )?.[1];
 
-    const db = store.read({ users: {}, sessions: { tokenHash: token ? tokenHash(token) : '' } });
-    const session = token && db.sessions.find(
-      item => item.tokenHash === tokenHash(token),
-    );
-    const user = session && db.users.find(item => item.id === session.userId);
-
-    if (!session || session.expiresAt <= clock() || !isAuthorizedUser(user)) {
+    const hash = token ? tokenHash(token) : '';
+    const db = store.read({ users: {}, sessions: { tokenHash: hash } });
+    const autenticacion = activeSession(db, hash, clock());
+    if (!autenticacion) {
       throw new ApiError(401, 'La sesión no es válida. Inicia sesión nuevamente.');
     }
-    return { user, session };
+    return autenticacion;
   }
 
   const server = createServer(async (request, response) => {
@@ -492,7 +489,7 @@ export function createApplication({
 
       // HU06 / T06.1: solicitudes y HU09 / T09.2: atención parcial.
       if (path === '/api/requests' || path.startsWith('/api/requests/')) {
-        const { user } = authenticate(request);
+        const { user, session } = authenticate(request);
 
         if (user.role !== 'hospital' && user.role !== 'inventory') {
           throw new ApiError(403, 'Tu perfil no puede gestionar solicitudes.');
@@ -552,24 +549,12 @@ export function createApplication({
           }
 
           const datos = await readBody(request);
-          try {
-            const resultado = await confirmarDespacho({
-              store,
-              user,
-              pedidoId: rutaDespacho[1],
-              datos,
-              hoy: fechaLocal(clock),
-              ahora: new Date(clock()).toISOString(),
-            });
-
-            send(resultado.existente ? 200 : 201, resultado);
-            return;
-          } catch (error) {
-            if (error instanceof DispatchError) {
-              throw new ApiError(error.status, error.message);
-            }
-            throw error;
-          }
+          const resultado = await confirmarDespacho({
+            store, sessionTokenHash: session.tokenHash, clock,
+            pedidoId: rutaDespacho[1], datos,
+          });
+          send(resultado.existente ? 200 : 201, resultado);
+          return;
         }
 
         if (path === '/api/requests' && request.method === 'POST') {
@@ -651,30 +636,18 @@ export function createApplication({
           rutaDescarte ? 'Operación no implementada.' : 'Recurso no encontrado.');
       }
       if (path === '/api/dispatches' || path.startsWith('/api/dispatches/')) {
-        const { user } = authenticate(request);
+        const { user, session } = authenticate(request);
         if (user.role !== 'inventory') {
           throw new ApiError(403, 'Solo inventario puede gestionar despachos.');
         }
 
         if (path === '/api/dispatches' && request.method === 'POST') {
           const datos = await readBody(request);
-          try {
-            const resultado = await confirmarDespacho({
-              store,
-              user,
-              pedidoId: datos.pedidoId,
-              datos,
-              hoy: fechaLocal(clock),
-              ahora: new Date(clock()).toISOString(),
-            });
-            send(resultado.existente ? 200 : 201, resultado);
-            return;
-          } catch (error) {
-            if (error instanceof DispatchError) {
-              throw new ApiError(error.status, error.message);
-            }
-            throw error;
-          }
+          const resultado = await confirmarDespacho({
+            store, sessionTokenHash: session.tokenHash, clock, datos,
+          });
+          send(resultado.existente ? 200 : 201, resultado);
+          return;
         }
 
         if (request.method === 'GET') {
