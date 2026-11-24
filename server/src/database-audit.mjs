@@ -59,5 +59,6 @@ export function auditDatabase(data) {
     unique(module, 'codigo', code => typeof code === 'string' && code.trim() ? code.trim().toUpperCase() : null);
   }
   unique('donations', 'claveConfirmacion', (key, item) => JSON.stringify([item.scopeId, key]));
+  unique('dispatches', 'claveConfirmacion', (key, item) => JSON.stringify([item.scopeId, key]));
   return { ok: issues.length === 0, issues };
 }
