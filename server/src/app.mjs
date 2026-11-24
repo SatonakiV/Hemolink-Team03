@@ -8,6 +8,7 @@ import { consultarStock } from './inventory.mjs';
 import { DonanteError, normalizarRut, rutValido, validarDonante } from './donors.mjs';
 import { DonacionError, validarDonacion, registrarDonacion, detalleDonacion, confirmacionPrevia} from './donations.mjs';
 import { donacionDeSede, registrarMuestra } from './samples.mjs';
+import {DescarteError, validarMotivo, buscarUnidadPorCodigo, descartarUnidad} from './discards.mjs';
 import { SolicitudError, validarSolicitud, ordenarBandeja, crearSolicitud, obtenerFichaSolicitud } from './requests.mjs';
 import { AtencionParcialError } from './partial-fulfillment.mjs';
 import { atenderPedidoParcial } from './partial-fulfillment-integration.mjs';
@@ -616,6 +617,39 @@ export function createApplication({
         throw new ApiError(405, 'Operación no implementada.');
       }
 
+      // HU07/T07.1: búsqueda por código y descarte, solo inventario de la sede.
+      if (path.startsWith('/api/inventory/')) {
+        const { user } = authenticate(request);
+        if (!roleModules[user.role]?.includes('inventory')) {
+          throw new ApiError(403, 'Tu perfil no puede gestionar el inventario.');
+        }
+        if (path === '/api/inventory/lookup' && request.method === 'GET') {
+          // Lectura completa: la búsqueda también informa la reserva activa.
+          const item = buscarUnidadPorCodigo(
+            store.read(),
+            user,
+            url.searchParams.get('codigo'),
+          );
+          send(200, { item });
+          return;
+        }
+        const rutaDescarte = /^\/api\/inventory\/([A-Za-z0-9_-]{1,64})\/discard$/.exec(path);
+        if (rutaDescarte && request.method === 'POST') {
+          const motivo = validarMotivo(await readBody(request));
+          let resultado;
+          // Unidad, reserva y pedido cambian juntos o no cambia nada.
+          store.update(db => {
+            resultado = descartarUnidad(db, user, rutaDescarte[1], motivo, {
+              hoy: fechaLocal(clock),
+              ahora: new Date(clock()).toISOString(),
+            });
+          });
+          send(200, resultado);
+          return;
+        }
+        throw new ApiError(rutaDescarte ? 405 : 404,
+          rutaDescarte ? 'Operación no implementada.' : 'Recurso no encontrado.');
+      }
       if (path === '/api/dispatches' || path.startsWith('/api/dispatches/')) {
         const { user } = authenticate(request);
         if (user.role !== 'inventory') {
@@ -712,7 +746,7 @@ export function createApplication({
           ? error.message
           : 'No se pudo completar la operación.',
         ...(error instanceof DonanteError || error instanceof DonacionError || error instanceof SolicitudError
-          ? { errors: error.errors } : {}),
+          || error instanceof DescarteError ? { errors: error.errors } : {}),
       });
     }
   });
