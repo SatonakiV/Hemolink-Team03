@@ -741,5 +741,94 @@ test('UT10.3-A: Mover n unidades aumenta D, reduce R y F, y mantiene P', async (
   assert.deepEqual(ficha.despachos[0].unidades, ['UNI-C1', 'UNI-C2']);
 });
 
+test('UT10.3-B: Despacho completo cierra el pedido', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'hemolink-disp-103b-'));
+  const dbPath = join(dir, 'hemolink.sqlite');
+  let store = new SqliteStore(dbPath);
+  t.after(() => {
+    try { store?.close(); } catch {}
+    try { rmSync(dir, { recursive: true, force: true }); } catch {}
+  });
+
+  seedDemoData(store, 'DemoHemoLink2026!');
+
+  // Pedido con Q = 3. Reservas R = 3 (D = 0, F = 3, P = 0, estado = 'reservado')
+  store.update((db) => {
+    db.records.push(
+      {
+        id: 'PED-103B', module: 'requests', scopeId: 'hospital-demo', hospitalId: 'hospital-demo',
+        grupoAbo: 'O', factorRh: 'positivo', cantidadSolicitada: 3, cantidadDespachada: 0,
+        cantidadReservada: 3, pendienteAsignar: 0, pendienteEntregar: 3, estado: 'reservado',
+      },
+      { id: 'DON-103B', module: 'donations', scopeId: 'sede-central' },
+      {
+        id: 'UNI-B1', module: 'inventory', scopeId: 'sede-central', codigo: 'U-B1', donacionId: 'DON-103B',
+        grupoAbo: 'O', factorRh: 'positivo', estado: 'reservada', pedidoId: 'PED-103B', fechaVencimiento: '2026-12-10',
+      },
+      {
+        id: 'UNI-B2', module: 'inventory', scopeId: 'sede-central', codigo: 'U-B2', donacionId: 'DON-103B',
+        grupoAbo: 'O', factorRh: 'positivo', estado: 'reservada', pedidoId: 'PED-103B', fechaVencimiento: '2026-12-10',
+      },
+      {
+        id: 'UNI-B3', module: 'inventory', scopeId: 'sede-central', codigo: 'U-B3', donacionId: 'DON-103B',
+        grupoAbo: 'O', factorRh: 'positivo', estado: 'reservada', pedidoId: 'PED-103B', fechaVencimiento: '2026-12-10',
+      },
+      {
+        id: 'RES-B1', module: 'reservations', scopeId: 'sede-central', unidadId: 'UNI-B1',
+        pedidoId: 'PED-103B', estado: 'reservada', fechaVencimiento: '2026-12-10',
+      },
+      {
+        id: 'RES-B2', module: 'reservations', scopeId: 'sede-central', unidadId: 'UNI-B2',
+        pedidoId: 'PED-103B', estado: 'reservada', fechaVencimiento: '2026-12-10',
+      },
+      {
+        id: 'RES-B3', module: 'reservations', scopeId: 'sede-central', unidadId: 'UNI-B3',
+        pedidoId: 'PED-103B', estado: 'reservada', fechaVencimiento: '2026-12-10',
+      },
+    );
+  });
+
+  // 1. Salida parcial de 2 unidades
+  const r1 = await confirmarDespacho({
+    store, user: USER_INV, pedidoId: 'PED-103B', hoy: HOY, ahora: AHORA,
+    datos: { tipo: 'programado', fechaPrevista: '2026-11-28', reservaIds: ['UNI-B1', 'UNI-B2'] },
+  });
+  assert.equal(r1.saldos.cantidadDespachada, 2);
+  assert.equal(r1.saldos.cantidadReservada, 1);
+  assert.equal(r1.saldos.pendienteEntregar, 1);
+  assert.equal(r1.saldos.estado, 'parcial');
+
+  // 2. Salida de la unidad restante (D = Q = 3) -> Cierre de pedido
+  const r2 = await confirmarDespacho({
+    store, user: USER_INV, pedidoId: 'PED-103B', hoy: HOY, ahora: AHORA,
+    datos: { tipo: 'urgente', motivo: 'Entrega final', reservaIds: ['UNI-B3'] },
+  });
+
+  assert.equal(r2.saldos.cantidadDespachada, 3);
+  assert.equal(r2.saldos.cantidadReservada, 0);
+  assert.equal(r2.saldos.pendienteEntregar, 0);
+  assert.equal(r2.saldos.pendienteAsignar, 0);
+  assert.equal(r2.saldos.estado, 'completado');
+
+  // Comprobar persistencia tras reiniciar la base SQLite
+  store.close();
+  store = new SqliteStore(dbPath);
+
+  const db = store.read();
+  const pedido = db.records.find((r) => r.id === 'PED-103B');
+  assert.equal(pedido.estado, 'completado');
+  assert.equal(pedido.cantidadDespachada, 3);
+  assert.equal(pedido.cantidadReservada, 0);
+  assert.equal(pedido.pendienteEntregar, 0);
+  assert.equal(pedido.pendienteAsignar, 0);
+
+  const userHospital = { id: 'hospital-demo', role: 'hospital', hospitalId: 'hospital-demo' };
+  const ficha = obtenerFichaSolicitud(db, userHospital, 'PED-103B', { hoy: HOY });
+  assert.equal(ficha.estado, 'completado');
+  assert.equal(ficha.pendienteEntregar, 0);
+  assert.equal(ficha.despachos.length, 2);
+});
+
+
 
 
