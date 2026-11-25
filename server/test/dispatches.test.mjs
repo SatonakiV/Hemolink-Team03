@@ -10,8 +10,9 @@ import {
   confirmarDespacho,
 } from '../src/dispatches.mjs';
 import { SqliteStore } from '../src/sqlite-store.mjs';
-import { seedDemoData } from '../src/auth.mjs';
+import { seedDemoData, passwordHash } from '../src/auth.mjs';
 import { createApplication } from '../src/app.mjs';
+import { obtenerFichaSolicitud } from '../src/requests.mjs';
 
 test('UT10.1-A: programado acepta fecha civil válida', () => {
   const comandoValido = validarComandoDespacho({
@@ -658,3 +659,87 @@ test('Integración: Fallo de escritura revierte cambios, y doble confirmación y
     try { rmSync(dir, { recursive: true, force: true }); } catch {}
   }
 });
+
+test('UT10.3-A: Mover n unidades aumenta D, reduce R y F, y mantiene P', async (t) => {
+  const store = new SqliteStore(':memory:');
+  t?.after?.(() => store.close());
+  seedDemoData(store, 'DemoHemoLink2026!');
+
+  // Pedido con Q = 5. Reservas en distintas sedes: 2 en sede-central, 1 en sede-norte (Total R = 3).
+  // Inicialmente: D = 0, R = 3, F = 5, P = 2, estado = 'parcial'.
+  store.update((db) => {
+    db.records.push(
+      {
+        id: 'PED-103A', module: 'requests', scopeId: 'hospital-demo', hospitalId: 'hospital-demo',
+        grupoAbo: 'O', factorRh: 'positivo', cantidadSolicitada: 5, cantidadDespachada: 0,
+        cantidadReservada: 3, pendienteAsignar: 2, pendienteEntregar: 5, estado: 'parcial',
+      },
+      { id: 'DON-103A', module: 'donations', scopeId: 'sede-central' },
+      { id: 'DON-NORTE-103A', module: 'donations', scopeId: 'sede-norte' },
+      {
+        id: 'UNI-C1', module: 'inventory', scopeId: 'sede-central', codigo: 'U-C1', donacionId: 'DON-103A',
+        grupoAbo: 'O', factorRh: 'positivo', estado: 'reservada', pedidoId: 'PED-103A', fechaVencimiento: '2026-12-10',
+      },
+      {
+        id: 'UNI-C2', module: 'inventory', scopeId: 'sede-central', codigo: 'U-C2', donacionId: 'DON-103A',
+        grupoAbo: 'O', factorRh: 'positivo', estado: 'reservada', pedidoId: 'PED-103A', fechaVencimiento: '2026-12-10',
+      },
+      {
+        id: 'UNI-N1', module: 'inventory', scopeId: 'sede-norte', codigo: 'U-N1', donacionId: 'DON-NORTE-103A',
+        grupoAbo: 'O', factorRh: 'positivo', estado: 'reservada', pedidoId: 'PED-103A', fechaVencimiento: '2026-12-10',
+      },
+      {
+        id: 'RES-C1', module: 'reservations', scopeId: 'sede-central', unidadId: 'UNI-C1',
+        pedidoId: 'PED-103A', estado: 'reservada', fechaVencimiento: '2026-12-10',
+      },
+      {
+        id: 'RES-C2', module: 'reservations', scopeId: 'sede-central', unidadId: 'UNI-C2',
+        pedidoId: 'PED-103A', estado: 'reservada', fechaVencimiento: '2026-12-10',
+      },
+      {
+        id: 'RES-N1', module: 'reservations', scopeId: 'sede-norte', unidadId: 'UNI-N1',
+        pedidoId: 'PED-103A', estado: 'reservada', fechaVencimiento: '2026-12-10',
+      },
+    );
+  });
+
+  // Mover n = 2 unidades desde sede-central (UNI-C1 y UNI-C2)
+  const resultado = await confirmarDespacho({
+    store, user: USER_INV, pedidoId: 'PED-103A', hoy: HOY, ahora: AHORA,
+    datos: { tipo: 'urgente', motivo: 'Despacho parcial T10.3-A', reservaIds: ['UNI-C1', 'UNI-C2'] },
+  });
+
+  // D aumenta en 2 (0 -> 2)
+  assert.equal(resultado.saldos.cantidadDespachada, 2);
+  // R disminuye en 2 (3 -> 1, ya que UNI-N1 en sede-norte sigue reservada)
+  assert.equal(resultado.saldos.cantidadReservada, 1);
+  // F (pendienteEntregar) disminuye en 2 (5 -> 3)
+  assert.equal(resultado.saldos.pendienteEntregar, 3);
+  // P (pendienteAsignar) se mantiene en 2
+  assert.equal(resultado.saldos.pendienteAsignar, 2);
+  assert.equal(resultado.saldos.estado, 'parcial');
+
+  // Verificar persistencia en base de datos
+  const db = store.read();
+  const pedido = db.records.find((r) => r.id === 'PED-103A');
+  assert.equal(pedido.cantidadDespachada, 2);
+  assert.equal(pedido.cantidadReservada, 1);
+  assert.equal(pedido.pendienteEntregar, 3);
+  assert.equal(pedido.pendienteAsignar, 2);
+  assert.equal(pedido.estado, 'parcial');
+
+  // Verificar que obtenerFichaSolicitud expone contadores actualizados y el comprobante
+  const userHospital = { id: 'hospital-demo', role: 'hospital', hospitalId: 'hospital-demo' };
+  const ficha = obtenerFichaSolicitud(db, userHospital, 'PED-103A', { hoy: HOY });
+  assert.equal(ficha.cantidadDespachada, 2);
+  assert.equal(ficha.cantidadReservada, 1);
+  assert.equal(ficha.pendienteEntregar, 3);
+  assert.equal(ficha.pendienteAsignar, 2);
+  assert.equal(ficha.estado, 'parcial');
+  assert.equal(ficha.despachos.length, 1);
+  assert.equal(ficha.despachos[0].id, resultado.item.id);
+  assert.deepEqual(ficha.despachos[0].unidades, ['UNI-C1', 'UNI-C2']);
+});
+
+
+
