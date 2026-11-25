@@ -829,6 +829,122 @@ test('UT10.3-B: Despacho completo cierra el pedido', async (t) => {
   assert.equal(ficha.despachos.length, 2);
 });
 
+test('UT10.3-C: Hospital ajeno no recibe el comprobante', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'hemolink-disp-103c-'));
+  const dbPath = join(dir, 'hemolink.sqlite');
+  const application = createApplication({ databasePath: dbPath, seedDemo: true });
+
+  await new Promise((resolve) => application.server.listen(0, '127.0.0.1', resolve));
+  const base = `http://127.0.0.1:${application.server.address().port}`;
+
+  t.after(async () => {
+    await new Promise((resolve) => application.server.close(resolve));
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  // Registrar un segundo hospital en la base para verificar el aislamiento
+  application.store.update((db) => {
+    db.users.push({
+      id: 'hosp-regional-user',
+      email: 'hospital2@hemolink.test',
+      role: 'hospital',
+      isVerified: true,
+      passwordHash: passwordHash('DemoHemoLink2026!'),
+      siteId: null,
+      hospitalId: 'hospital-regional',
+    });
+
+    db.records.push(
+      {
+        id: 'PED-103C', module: 'requests', scopeId: 'hospital-demo', hospitalId: 'hospital-demo',
+        grupoAbo: 'O', factorRh: 'positivo', cantidadSolicitada: 2, cantidadDespachada: 0,
+        cantidadReservada: 1, pendienteAsignar: 1, pendienteEntregar: 2, estado: 'parcial',
+      },
+      { id: 'DON-103C', module: 'donations', scopeId: 'sede-central' },
+      {
+        id: 'UNI-C103', module: 'inventory', scopeId: 'sede-central', codigo: 'U-C103', donacionId: 'DON-103C',
+        grupoAbo: 'O', factorRh: 'positivo', estado: 'reservada', pedidoId: 'PED-103C', fechaVencimiento: '2026-12-10',
+      },
+      {
+        id: 'RES-C103', module: 'reservations', scopeId: 'sede-central', unidadId: 'UNI-C103',
+        pedidoId: 'PED-103C', estado: 'reservada', fechaVencimiento: '2026-12-10',
+      },
+    );
+  });
+
+  const request = async (path, { token, body, method = 'GET' } = {}) => {
+    const res = await fetch(base + path, {
+      method,
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(body ? { 'Content-Type': 'application/json' } : {}),
+      },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    return { status: res.status, data: res.status === 204 ? null : await res.json() };
+  };
+
+  const tokenHospital1 = (await request('/api/login', {
+    method: 'POST', body: { email: 'hospital@hemolink.test', password: 'DemoHemoLink2026!' },
+  })).data.token;
+
+  const tokenHospital2 = (await request('/api/login', {
+    method: 'POST', body: { email: 'hospital2@hemolink.test', password: 'DemoHemoLink2026!' },
+  })).data.token;
+
+  const tokenInventario = (await request('/api/login', {
+    method: 'POST', body: { email: 'inventario@hemolink.test', password: 'DemoHemoLink2026!' },
+  })).data.token;
+
+  const tokenEnfermeria = (await request('/api/login', {
+    method: 'POST', body: { email: 'enfermeria@hemolink.test', password: 'DemoHemoLink2026!' },
+  })).data.token;
+
+  // Inventario emite despacho para PED-103C
+  const despachoRes = await request('/api/requests/PED-103C/dispatches', {
+    method: 'POST',
+    token: tokenInventario,
+    body: { tipo: 'urgente', motivo: 'Emergencia 103C', reservaIds: ['UNI-C103'] },
+  });
+  assert.equal(despachoRes.status, 201);
+  const comprobanteId = despachoRes.data.item.id;
+
+  // 1. Hospital titular (Hospital 1) consulta ficha: recibe 200 con el comprobante en despachos
+  const fichaH1 = await request('/api/requests/PED-103C', { token: tokenHospital1 });
+  assert.equal(fichaH1.status, 200);
+  assert.equal(fichaH1.data.item.id, 'PED-103C');
+  assert.equal(fichaH1.data.item.despachos.length, 1);
+  assert.equal(fichaH1.data.item.despachos[0].id, comprobanteId);
+
+  // 2. Personal de inventario consulta ficha: recibe 200 con el comprobante
+  const fichaInv = await request('/api/requests/PED-103C', { token: tokenInventario });
+  assert.equal(fichaInv.status, 200);
+  assert.equal(fichaInv.data.item.despachos.length, 1);
+  assert.equal(fichaInv.data.item.despachos[0].id, comprobanteId);
+
+  // 3. Hospital ajeno (Hospital 2) intenta consultar ficha: recibe 404 (bloqueado)
+  const fichaH2 = await request('/api/requests/PED-103C', { token: tokenHospital2 });
+  assert.equal(fichaH2.status, 404);
+  assert.equal(fichaH2.data.message, 'Solicitud no encontrada.');
+
+  // Hospital 2 consulta bandeja global de solicitudes: no incluye PED-103C
+  const bandejaH2 = await request('/api/requests', { token: tokenHospital2 });
+  assert.equal(bandejaH2.status, 200);
+  assert.ok(!bandejaH2.data.items.some((r) => r.id === 'PED-103C'));
+
+  // 4. Hospital 2 intenta acceder directamente a /api/dispatches: recibe 403 (solo inventario)
+  const directDispH2 = await request('/api/dispatches', { token: tokenHospital2 });
+  assert.equal(directDispH2.status, 403);
+
+  const directDispItemH2 = await request(`/api/dispatches/${comprobanteId}`, { token: tokenHospital2 });
+  assert.equal(directDispItemH2.status, 403);
+
+  // 5. Usuario sin sesión o rol sin permiso (enfermería) no pueden consultar la ficha (401 / 403)
+  assert.equal((await request('/api/requests/PED-103C')).status, 401);
+  assert.equal((await request('/api/requests/PED-103C', { token: tokenEnfermeria })).status, 403);
+});
+
+
 
 
 
