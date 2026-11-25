@@ -12,6 +12,7 @@ import {DescarteError, validarMotivo, buscarUnidadPorCodigo, descartarUnidad} fr
 import { SolicitudError, validarSolicitud, ordenarBandeja, crearSolicitud, obtenerFichaSolicitud } from './requests.mjs';
 import { AtencionParcialError } from './partial-fulfillment.mjs';
 import { atenderPedidoParcial } from './partial-fulfillment-integration.mjs';
+import { consultarReservaCompleta, confirmarReservaCompleta } from './reservations.mjs';
 import { confirmarDespacho } from './dispatches.mjs';
 import {
   matchesPassword, passwordHash, tokenHash, newToken,
@@ -487,12 +488,32 @@ export function createApplication({
         throw new ApiError(405, 'Operación no implementada.');
       }
 
-      // HU06 / T06.1: solicitudes y HU09 / T09.2: atención parcial.
+      // Solicitudes, reservas, atenciones parciales y despachos.
       if (path === '/api/requests' || path.startsWith('/api/requests/')) {
         const { user, session } = authenticate(request);
 
         if (user.role !== 'hospital' && user.role !== 'inventory') {
           throw new ApiError(403, 'Tu perfil no puede gestionar solicitudes.');
+        }
+
+        const rutaReserva = /^\/api\/requests\/([A-Za-z0-9_-]{1,64})\/reservations$/.exec(path);
+        if (rutaReserva) {
+          if (user.role !== 'inventory') {
+            throw new ApiError(403, 'Solo inventario puede reservar unidades.');
+          }
+          const pedidoId = rutaReserva[1];
+          if (request.method === 'GET') {
+            send(200, consultarReservaCompleta(store, pedidoId, fechaLocal(clock)));
+            return;
+          }
+          if (request.method === 'POST') {
+            const { version } = await readBody(request);
+            send(200, confirmarReservaCompleta({
+              store, sessionTokenHash: session.tokenHash, clock, pedidoId, version,
+            }));
+            return;
+          }
+          throw new ApiError(405, 'Operación no implementada.');
         }
 
         const rutaAtencionParcial =

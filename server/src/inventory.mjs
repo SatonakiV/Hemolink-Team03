@@ -11,6 +11,20 @@ export function unidadElegible(unidad, hoy) {
     fechaValida(unidad.fechaVencimiento) && hoy < unidad.fechaVencimiento;
 }
 
+export function registrarUnidadesReservadas(unidades, pedido, user, { hoy, ahora }) {
+  for (const unidad of unidades) {
+    Object.assign(unidad, {
+      estado: 'reservada',
+      pedidoId: pedido.id,
+      hospitalId: pedido.hospitalId ?? pedido.scopeId,
+      fechaReserva: hoy,
+      usuarioReservaId: user.id,
+      usuarioModificacionId: user.id,
+      fechaModificacion: ahora,
+    });
+  }
+}
+
 export function consultarStock(store, { sedeId, grupoAbo, factorRh, hoy }) {
   const { records } = store.read({ records: {
     module: 'inventory',

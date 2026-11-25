@@ -66,14 +66,20 @@ export function fechaLimiteReserva(unidad, reserva) {
   return fechaUnidad && fechaUnidad < fechaReserva ? fechaUnidad : fechaReserva;
 }
 
-export function calcularSaldosPedidoActuales(db, pedido, hoy) {
+export function obtenerReservasPedido(db, pedido) {
   const unidades = new Map();
-  const vencimientos = new Map();
+  const reservas = new Map();
   for (const registro of db.records) {
     if (registro.module !== 'inventory') continue;
     unidades.set(registro.id, registro);
     if (registro.estado === 'reservada' && registro.pedidoId === pedido.id) {
-      vencimientos.set(registro.id, fechaLimiteReserva(registro));
+      reservas.set(registro.id, {
+        id: registro.id,
+        estado: 'reservada',
+        fechaVencimiento: fechaLimiteReserva(registro),
+        codigo: registro.codigo ?? registro.id,
+        sedeId: registro.scopeId,
+      });
     }
   }
 
@@ -86,18 +92,25 @@ export function calcularSaldosPedidoActuales(db, pedido, hoy) {
 
     const unidadId = reserva.unidadId ?? reserva.id;
     const fecha = fechaLimiteReserva(unidad, reserva);
-    const anterior = vencimientos.get(unidadId);
+    const anterior = reservas.get(unidadId)?.fechaVencimiento;
     if (anterior === undefined || fecha === null || (anterior !== null && fecha < anterior)) {
-      vencimientos.set(unidadId, fecha);
+      reservas.set(unidadId, {
+        id: unidadId,
+        estado: 'reservada',
+        fechaVencimiento: fecha,
+        codigo: unidad?.codigo ?? reserva.codigo ?? unidadId,
+        sedeId: unidad?.scopeId ?? reserva.scopeId,
+      });
     }
   }
+  return [...reservas.values()];
+}
 
+export function calcularSaldosPedidoActuales(db, pedido, hoy) {
   return calcularSaldosPedidoConReservas({
     cantidadSolicitada: pedido.cantidadSolicitada,
     cantidadDespachada: pedido.cantidadDespachada ?? 0,
-    reservas: Array.from(vencimientos.values(), fechaVencimiento => ({
-      estado: 'reservada', fechaVencimiento,
-    })),
+    reservas: obtenerReservasPedido(db, pedido),
     hoy,
   });
 }
