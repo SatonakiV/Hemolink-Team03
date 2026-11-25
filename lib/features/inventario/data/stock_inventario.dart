@@ -2,19 +2,26 @@ import '../../../core/access/auth_session.dart';
 
 class UnidadStock {
   UnidadStock.fromJson(Map<String, dynamic> json)
-    : codigo = json['codigo'] as String,
+    : id = json['id'] is String ? json['id'] as String : '',
+      codigo = json['codigo'] as String,
       sedeId = json['sedeId'] as String,
       grupoAbo = json['grupoAbo'] as String,
       factorRh = json['factorRh'] as String,
-      vencimiento = DateTime.parse(json['fechaVencimiento'] as String);
+      vencimiento = DateTime.parse(
+        json['fechaVencimiento'] as String,
+      );
 
+  final String id;
   final String codigo;
   final String sedeId;
   final String grupoAbo;
   final String factorRh;
   final DateTime vencimiento;
 
-  String get grupo => '$grupoAbo${factorRh == 'positivo' ? '+' : '-'}';
+  bool get tieneIdentificador => id.isNotEmpty;
+
+  String get grupo =>
+      '$grupoAbo${factorRh == 'positivo' ? '+' : '-'}';
 }
 
 class StockInventario {
@@ -34,18 +41,27 @@ class StockInventario {
       if (grupoAbo.isNotEmpty) 'grupoAbo': grupoAbo,
       if (factorRh.isNotEmpty) 'factorRh': factorRh,
     };
+
     final datos = await sesion.loadModuleData(
       'inventory',
       queryParameters: filtros.isEmpty ? null : filtros,
     );
-    if (datos
-        case {'items': final List<dynamic> items, 'total': final int total}
-        when total == items.length) {
-      return StockInventario._(
-        items.cast<Map<String, dynamic>>().map(UnidadStock.fromJson).toList(),
-        total,
-      );
+
+    final itemsJson = datos['items'];
+
+    if (itemsJson is! List) {
+      throw const FormatException('Respuesta de stock inválida');
     }
-    throw const FormatException('Respuesta de stock inválida');
+
+    final unidades = itemsJson
+        .cast<Map<String, dynamic>>()
+        .map(UnidadStock.fromJson)
+        .toList();
+
+    final total = datos['total'] is int
+        ? datos['total'] as int
+        : unidades.length;
+
+    return StockInventario._(unidades, total);
   }
 }
