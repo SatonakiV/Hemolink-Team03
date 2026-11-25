@@ -2,7 +2,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { fechaValida } from './dates.mjs';
-import { unidadElegible } from './inventory.mjs';
+import { registrarUnidadesReservadas, unidadElegible } from './inventory.mjs';
 import { calcularSaldosPedidoActuales } from './order-balances.mjs';
 import { SolicitudError } from './requests.mjs';
 import { AtencionParcialError } from './partial-fulfillment.mjs';
@@ -202,7 +202,7 @@ export async function atenderPedidoParcial({
         planActual.pedidoId,
       );
 
-      for (const unidadId of planActual.reservaIds) {
+      const unidades = planActual.reservaIds.map(unidadId => {
         const unidad = db.records.find(
           item =>
             item.module === 'inventory' &&
@@ -221,15 +221,9 @@ export async function atenderPedidoParcial({
           );
         }
 
-        // Se conserva el ID, codigo, donacion y sede.
-        unidad.estado = 'reservada';
-        unidad.pedidoId = pedido.id;
-        unidad.hospitalId = pedido.hospitalId;
-        unidad.fechaReserva = hoy;
-        unidad.usuarioReservaId = user.id;
-        unidad.usuarioModificacionId = user.id;
-        unidad.fechaModificacion = ahora;
-      }
+        return unidad;
+      });
+      registrarUnidadesReservadas(unidades, pedido, user, { hoy, ahora });
     },
 
     guardarAviso(db, aviso) {

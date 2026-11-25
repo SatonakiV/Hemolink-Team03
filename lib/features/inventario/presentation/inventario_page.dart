@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../../core/access/auth_session.dart';
 import '../data/stock_inventario.dart';
+import 'reserva_fefo_panel.dart';
 
 class InventarioPage extends StatefulWidget {
   const InventarioPage({super.key, required this.sesion});
@@ -208,6 +209,13 @@ class _InventarioPageState extends State<InventarioPage> {
                           _filtros(habilitado: listo && sesionActiva),
                           const SizedBox(height: 20),
                           _resumen(context, estado),
+                          if (sesionActiva) ...[
+                            const SizedBox(height: 12),
+                            ReservaFefoPanel(
+                              sesion: widget.sesion,
+                              alCambiarStock: _actualizar,
+                            ),
+                          ],
                         ],
                       ),
                     ),

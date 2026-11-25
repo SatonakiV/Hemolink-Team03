@@ -134,6 +134,11 @@ class AuthSession {
     Map<String, String>? queryParameters,
   }) => _request(module, queryParameters: queryParameters);
 
+  Future<Map<String, dynamic>> postModuleData(
+    String path,
+    Map<String, dynamic> body,
+  ) => _request(path, body: body, post: true);
+
   Future<List<Map<String, dynamic>>> loadModule(String module) async {
     final data = await loadModuleData(module);
     return (data['items'] as List).cast<Map<String, dynamic>>();
