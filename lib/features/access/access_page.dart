@@ -9,6 +9,7 @@ import '../donantes/data/donante_repository.dart';
 import '../donantes/presentation/donantes_page.dart';
 import '../donaciones/presentation/donaciones_page.dart';
 import '../inventario/presentation/inventario_page.dart';
+import '../solicitudes/presentation/solicitudes_page.dart';
 
 const moduleNames = {
   'donors': 'Donantes',
@@ -97,6 +98,7 @@ class _AccessPageState extends State<AccessPage> {
       'donors' => DonantesPage(sesion: _session, repositorio: _donantes),
       'donations' => DonacionesPage(sesion: _session),
       'inventory' => InventarioPage(sesion: _session),
+      'requests' => SolicitudesPage(sesion: _session),
       _ => null,
     };
     if (page != null) {
