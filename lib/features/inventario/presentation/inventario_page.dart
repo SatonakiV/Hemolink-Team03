@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../../core/access/auth_session.dart';
 import '../data/descarte_repository.dart';
 import '../data/stock_inventario.dart';
+import '../../solicitudes/presentation/solicitudes_page.dart';
 import 'descarte_panel.dart';
 import 'reserva_fefo_panel.dart';
 
@@ -190,6 +191,18 @@ class _InventarioPageState extends State<InventarioPage> {
         appBar: AppBar(
           title: const Text('Inventario'),
           actions: [
+            if (sesionActiva)
+              IconButton(
+                tooltip: 'Bandeja de solicitudes',
+                onPressed: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => SolicitudesPage(sesion: widget.sesion),
+                    ),
+                  );
+                },
+                icon: const Icon(Icons.assignment_outlined),
+              ),
             IconButton(
               tooltip: 'Actualizar stock',
               onPressed: listo && sesionActiva ? _actualizar : null,

@@ -32,6 +32,7 @@ class AuthSession {
   AppUser? _currentUser;
   AppUser? get currentUser => _currentUser;
   String? get accessToken => _token;
+  http.Client get client => _client;
 
   Future<void> _clear() async {
     _token = null;

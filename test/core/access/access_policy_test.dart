@@ -173,5 +173,26 @@ void main() {
       );
       expect(AccessPolicy.modulesFor(null), isEmpty);
     });
+
+    test('hospital e inventario ven Solicitudes; solo hospital puede crearlas', () {
+      expect(
+        AccessPolicy.modulesFor(usuario(UserRole.hospital)),
+        contains('requests'),
+      );
+      expect(
+        AccessPolicy.modulesFor(usuario(UserRole.inventory)),
+        contains('requests'),
+      );
+      expect(
+        AccessPolicy.modulesFor(usuario(UserRole.nursing)),
+        isNot(contains('requests')),
+      );
+      expect(AccessPolicy.canViewRequests(usuario(UserRole.hospital)), isTrue);
+      expect(AccessPolicy.canViewRequests(usuario(UserRole.inventory)), isTrue);
+      expect(AccessPolicy.canViewRequests(usuario(UserRole.nursing)), isFalse);
+      expect(AccessPolicy.canCreateRequests(usuario(UserRole.hospital)), isTrue);
+      expect(AccessPolicy.canCreateRequests(usuario(UserRole.inventory)), isFalse);
+      expect(AccessPolicy.canCreateRequests(usuario(UserRole.nursing)), isFalse);
+    });
   });
 }

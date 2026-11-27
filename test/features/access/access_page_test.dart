@@ -38,6 +38,10 @@ AuthSession sessionFor({String role = 'nursing', bool rejected = false}) =>
           expect(request.headers['Authorization'], 'Bearer opaque');
           return jsonResponse({'items': [], 'total': 0});
         }
+        if (request.url.path == '/api/requests') {
+          expect(request.headers['Authorization'], 'Bearer opaque');
+          return jsonResponse({'items': []});
+        }
         return jsonResponse({
           'items': [
             {'label': 'Registro persistente de prueba'},
@@ -145,7 +149,9 @@ void main() {
       );
       expect(
         find.widgetWithText(OutlinedButton, 'Solicitudes'),
-        role == 'hospital' ? findsOneWidget : findsNothing,
+        (role == 'hospital' || role == 'inventory')
+            ? findsOneWidget
+            : findsNothing,
       );
       await tester.tap(find.widgetWithText(OutlinedButton, module));
       await tester.pumpAndSettle();
@@ -163,7 +169,9 @@ void main() {
         await tester.pageBack();
         await tester.pumpAndSettle();
       } else {
-        expect(find.text('Registro persistente de prueba'), findsOneWidget);
+        expect(find.text('No hay solicitudes registradas.'), findsOneWidget);
+        await tester.pageBack();
+        await tester.pumpAndSettle();
       }
       await tester.ensureVisible(find.text('Cerrar sesión'));
       await tester.tap(find.text('Cerrar sesión'));
