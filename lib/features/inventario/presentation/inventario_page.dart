@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 
 import '../../../core/access/auth_session.dart';
+import '../data/descarte_repository.dart';
 import '../data/stock_inventario.dart';
+import 'descarte_panel.dart';
 import 'reserva_fefo_panel.dart';
 
 class InventarioPage extends StatefulWidget {
@@ -19,6 +21,7 @@ class _InventarioPageState extends State<InventarioPage> {
   String _grupoAbo = '';
   String _factorRh = '';
   late Future<StockInventario> _consulta;
+  late final _descartes = ApiDescarteRepository(widget.sesion);
 
   @override
   void initState() {
@@ -214,6 +217,11 @@ class _InventarioPageState extends State<InventarioPage> {
                             ReservaFefoPanel(
                               sesion: widget.sesion,
                               alCambiarStock: _actualizar,
+                            ),
+                            const SizedBox(height: 12),
+                            DescartePanel(
+                              repositorio: _descartes,
+                              alDescartar: _actualizar,
                             ),
                           ],
                         ],

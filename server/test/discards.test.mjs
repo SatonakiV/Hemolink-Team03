@@ -216,7 +216,7 @@ test('UT07.1-D: también libera una unidad marcada como reservada (forma de HU09
   const f = await entorno(t);
   const r = await f.descartar('MARC');
   assert.equal(r.estado, 200, JSON.stringify(r.datos));
-  assert.deepEqual(r.datos.reservasInvalidadas, [{ reservaId: null, pedidoId: 'PED-2' }]);
+  assert.deepEqual(r.datos.reservasInvalidadas, [{ reservaId: 'MARC', pedidoId: 'PED-2' }]);
   assert.equal(r.datos.pedidos[0].cantidadReservada, 0);
   assert.equal(r.datos.pedidos[0].pendienteAsignar, 2);
   assert.equal(r.datos.pedidos[0].estado, 'pendiente');

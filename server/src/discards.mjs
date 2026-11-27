@@ -65,7 +65,7 @@ function reservasActivas(db, unidad) {
     .filter(registro => esRegistroReservaActiva(registro, unidad.id))
     .map(registro => ({ reservaId: registro.id, pedidoId: registro.pedidoId }));
   if (esUnidadMarcada(unidad) && !activas.some(r => r.pedidoId === unidad.pedidoId)) {
-    activas.push({ reservaId: null, pedidoId: unidad.pedidoId });
+    activas.push({ reservaId: unidad.id, pedidoId: unidad.pedidoId });
   }
   return activas;
 }
